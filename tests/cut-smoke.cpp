@@ -79,5 +79,18 @@ bool runCutSmoke(QString &error) {
     return false;
   }
 
+  // Vertical band removal must preserve alpha: create ARGB32 image with
+  // semi-transparent pixel, remove a vertical band, verify alpha is unchanged.
+  QImage alphaSource(4, 2, QImage::Format_ARGB32);
+  alphaSource.fill(QColor(0, 0, 0, 255)); // Opaque black
+  alphaSource.setPixelColor(2, 0, QColor(255, 0, 0, 128)); // Semi-transparent red
+  const QImage alphaCut = removeBand(alphaSource, Qt::Vertical, 0, 2);
+  if (alphaCut.size() != QSize(2, 2) ||
+      alphaCut.pixelColor(0, 0) != QColor(255, 0, 0, 128) ||
+      alphaCut.pixelColor(0, 1) != QColor(0, 0, 0, 255)) {
+    error = QStringLiteral("vertical removeBand alpha preservation failed");
+    return false;
+  }
+
   return true;
 }

@@ -37,6 +37,7 @@ QImage removeBand(const QImage &source, Qt::Orientation orientation,
   QImage out(width - band, source.height(), source.format());
   out.setDevicePixelRatio(source.devicePixelRatio());
   QPainter painter(&out);
+  painter.setCompositionMode(QPainter::CompositionMode_Source);
   painter.drawImage(QPoint(0, 0), source, QRect(0, 0, start, source.height()));
   painter.drawImage(QPoint(start, 0), source,
                     QRect(end, 0, width - end, source.height()));
