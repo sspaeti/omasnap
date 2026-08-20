@@ -1946,7 +1946,7 @@ QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
       QStringLiteral("Pin on screen · P · Ctrl+C on the pin copies it"));
   add(36, QStringLiteral("copy"), {}, QStringLiteral("Copy only · Ctrl+C"));
   add(40, QStringLiteral("both"), {}, QStringLiteral("Copy and save · Enter"));
-  add(36, QStringLiteral("save"), {}, QStringLiteral("Save only · Ctrl+S"));
+  add(36, QStringLiteral("save"), {}, QStringLiteral("Save only"));
   add(36, QStringLiteral("close"), {}, QStringLiteral("Close · Esc twice"));
 
   if (shapeMenuOpen_) {
@@ -3116,7 +3116,9 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     saveAs();
     return;
   } else if (event->matches(QKeySequence::Save)) {
-    finish(OutputMode::Save);
+    // Personal tweak: Ctrl+S saves and copies, matching the Enter habit.
+    // The toolbar's save button keeps the plain save-only behavior.
+    finish(OutputMode::Both);
     return;
   } else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
     finish(OutputMode::Both);
@@ -4921,7 +4923,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
        {QStringLiteral("Ctrl+Shift+Z"), QStringLiteral("Redo")},
        {QStringLiteral("Enter"), QStringLiteral("Copy + save")},
        {QStringLiteral("Ctrl+C"), QStringLiteral("Copy only")},
-       {QStringLiteral("Ctrl+S"), QStringLiteral("Save only")},
+       {QStringLiteral("Ctrl+S"), QStringLiteral("Save + copy")},
        {QStringLiteral("Ctrl+Shift+S"), QStringLiteral("Save As…")},
        {QStringLiteral("Esc"), QStringLiteral("Arrow / twice close")}},
       keepVisible);
