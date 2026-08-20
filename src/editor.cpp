@@ -244,6 +244,8 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
                              QuickOutputMode quickOutput, QWidget *parent)
     : QWidget(parent), capture_(std::move(capture)),
       quickOutputMode_(quickOutput) {
+  pristineSource_ = capture_.source;
+  pristineLogicalSize_ = capture_.previewSize;
   paletteConfig_ = loadPaletteConfig(defaultPaletteConfigPath());
   customColor_ = paletteConfig_.custom;
   setWindowTitle(QStringLiteral("Omasnap"));
@@ -317,6 +319,8 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
               return;
             }
             capture_ = job.capture;
+            pristineSource_ = capture_.source;
+            pristineLogicalSize_ = capture_.previewSize;
             redactionBaseStale_ = true;
             switch (pendingMode_) {
             case CaptureMode::Fullscreen:
@@ -355,6 +359,8 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
     }
     capture_.source = job.image;
     capture_.previewSize = job.scaledSize;
+    pristineSource_ = capture_.source;
+    pristineLogicalSize_ = capture_.previewSize;
     selection_ = QRectF(QPointF(), job.scaledSize);
     redactionBaseStale_ = true;
     windowMode_ = false;
@@ -906,8 +912,9 @@ void CaptureEditor::setStatus(QString status) {
 }
 
 CaptureEditor::EditState CaptureEditor::editState() const {
-  return {annotations_, backgroundStyle_, selection_, selectedAnnotation_,
-          selectedAnnotations_, nextMarker_};
+  return {annotations_,        backgroundStyle_,     selection_,
+          selectedAnnotation_, selectedAnnotations_, nextMarker_,
+          cuts_};
 }
 
 void CaptureEditor::applyEditState(const EditState &state) {
@@ -926,6 +933,10 @@ void CaptureEditor::applyEditState(const EditState &state) {
       !selectedAnnotations_.contains(selectedAnnotation_))
     selectedAnnotations_.push_back(selectedAnnotation_);
   nextMarker_ = state.nextMarker;
+  if (state.cuts != cuts_) {
+    cuts_ = state.cuts;
+    refreshComposedCapture();
+  }
   editingAnnotation_ = -1;
   interaction_ = Interaction::None;
   freehandPoints_.clear();
@@ -2294,6 +2305,17 @@ void CaptureEditor::updatePointerCursor() {
     setCursor(Qt::IBeamCursor);
   else
     setCursor(Qt::CrossCursor);
+}
+
+void CaptureEditor::refreshComposedCapture(const CutOp *liveCut) {
+  QVector<CutOp> cuts = cuts_;
+  if (liveCut)
+    cuts.push_back(*liveCut);
+  capture_.source = composeCuts(pristineSource_, cuts);
+  capture_.previewSize = composedLogicalSize(pristineLogicalSize_, cuts);
+  backdropKey_ = 0;           // force backdrop pixmap rebuild
+  redactionBaseStale_ = true; // force redaction layer rebuild
+  update();
 }
 
 void CaptureEditor::refreshBackdropCache() {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "capture.hpp"
+#include "cut.hpp"
 #include "palette-config.hpp"
 
 #include <QElapsedTimer>
@@ -122,6 +123,7 @@ private:
     int selectedAnnotation = -1;
     QVector<int> selectedAnnotations;
     int nextMarker = 1;
+    QVector<CutOp> cuts;
   };
 
   [[nodiscard]] QRectF annotationBounds(const Annotation &annotation) const;
@@ -167,6 +169,7 @@ private:
   void paintEdit(QPainter &painter);
   void paintSelect(QPainter &painter);
   void refreshBackdropCache();
+  void refreshComposedCapture(const CutOp *liveCut = nullptr);
   void runOcr(const QRectF &localSelection = {});
   void setStatus(QString status);
   void scaleSelectedAnnotation(qreal factor);
@@ -174,6 +177,11 @@ private:
   void updatePointerCursor();
 
   CaptureData capture_;
+  // Untouched capture, kept alongside cuts_ so cuts can be recomposed from
+  // scratch (undo/redo, in-progress cut preview) without accumulating error.
+  QImage pristineSource_;
+  QSize pristineLogicalSize_;
+  QVector<CutOp> cuts_;
   Phase phase_ = Phase::Select;
   Tool tool_ = Tool::Select;
   QRectF selection_;
