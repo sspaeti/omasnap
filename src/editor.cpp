@@ -2894,6 +2894,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
        {QStringLiteral("F / H"), QStringLiteral("Freehand / Highlighter")},
        {QStringLiteral("C"), QStringLiteral("Marker")},
        {QStringLiteral("R / D"), QStringLiteral("Rectangle / Redact")},
+       {QStringLiteral("X"), QStringLiteral("Cut out a band")},
        {QStringLiteral("T"), QStringLiteral("Text")},
        {QStringLiteral("Double click"), QStringLiteral("Edit text layer")},
        {QStringLiteral("1–6"), QStringLiteral("Color")},
