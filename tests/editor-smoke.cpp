@@ -6,6 +6,7 @@
 #include "cut-smoke.hpp"
 #include "editor.hpp"
 #include "instance-lock-smoke.hpp"
+#include "palette-config-smoke.hpp"
 #include "pin-layout-smoke.hpp"
 #include "pin-lifecycle-smoke.hpp"
 #include "transform-smoke.hpp"
@@ -2413,6 +2414,12 @@ int main(int argc, char **argv) {
   QString cutError;
   if (!runCutSmoke(cutError)) {
     qWarning().noquote() << "cut smoke failed:" << cutError;
+    return EXIT_FAILURE;
+  }
+
+  QString paletteError;
+  if (!runPaletteConfigSmoke(paletteError)) {
+    qWarning().noquote() << "palette config smoke failed:" << paletteError;
     return EXIT_FAILURE;
   }
 

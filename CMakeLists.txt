@@ -47,6 +47,8 @@ qt_add_executable(omasnap
   src/capture.hpp
   src/cut.cpp
   src/cut.hpp
+  src/palette-config.cpp
+  src/palette-config.hpp
   src/eyedropper.cpp
   src/eyedropper.hpp
   src/surface-capture.cpp
@@ -99,6 +101,10 @@ qt_add_executable(omasnap-smoke
   src/cut.hpp
   tests/cut-smoke.cpp
   tests/cut-smoke.hpp
+  src/palette-config.cpp
+  src/palette-config.hpp
+  tests/palette-config-smoke.cpp
+  tests/palette-config-smoke.hpp
   tests/surface-capture-smoke.cpp
   tests/surface-capture-smoke.hpp
   ${PROTOCOL_SOURCES}
