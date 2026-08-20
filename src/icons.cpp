@@ -81,15 +81,11 @@ void drawToolbarIcon(QPainter &painter, const QRectF &bounds,
       }
     }
   } else if (action == QStringLiteral("tool-cut")) {
-    painter.drawLine(QPointF(5, 5), QPointF(19, 19));
-    painter.drawLine(QPointF(19, 5), QPointF(5, 19));
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(color);
-    painter.drawEllipse(QPointF(12, 12), 1.5, 1.5);
-    painter.setPen(QPen(color, 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawEllipse(QPointF(5, 5), 2.4, 2.4);
-    painter.drawEllipse(QPointF(5, 19), 2.4, 2.4);
+    // Two image halves with the removed band collapsing between them.
+    painter.drawRect(QRectF(5, 4, 14, 5.5));
+    painter.drawRect(QRectF(5, 14.5, 14, 5.5));
+    painter.setPen(QPen(color, 1.4, Qt::DashLine, Qt::FlatCap));
+    painter.drawLine(QPointF(5, 12), QPointF(19, 12));
   } else if (action == QStringLiteral("tool-text")) {
     painter.drawLine(QPointF(5, 5), QPointF(19, 5));
     painter.drawLine(QPointF(12, 5), QPointF(12, 19));
