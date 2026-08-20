@@ -19,6 +19,8 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
 - Per-layer preset or custom colors (including highlighter ink), undo/redo history,
   OCR-region capture,
   mesh-gradient backdrops, and rendered drop shadows.
+- Cut tool: drag across a band of the image to remove it and collapse the gap, with a
+  live preview and dashed seam marker while dragging; annotations shift to follow.
 - Pin a finished capture as a bottom-right always-on-top layer surface, launched
   from the same `omasnap` executable and visible on every workspace.
 - Crash-resistant working snapshots under `/run/user/<UID>/omasnap/` (falling back to
@@ -259,6 +261,7 @@ Install the corresponding Tesseract language data before adding a language to
 | `C` | Numbered marker |
 | `R` | Rectangle |
 | `D` | Redact; press again to toggle randomized pixelation or solid redaction |
+| `X` | Cut out a band; drag across the image to remove and collapse a horizontal or vertical strip |
 | `T` | Neucha text |
 | `O` | Drag an OCR region and copy recognized text |
 | `B` | Cycle backdrop |

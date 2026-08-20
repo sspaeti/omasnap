@@ -80,6 +80,7 @@ public:
     Marker,
     Rectangle,
     Redact,
+    Cut,
     Text,
     Ocr,
     Eyedropper
@@ -196,6 +197,18 @@ private:
   bool marqueeAdditive_ = false;
   Interaction interaction_ = Interaction::None;
   QVector<QPointF> freehandPoints_;
+  // Cut tool live-drag state. cutDragStart_/cutBandLo_/cutBandHi_ and
+  // liveCut_.orientation are in annotation space (selection-relative logical
+  // px); cutDragRatio_/cutDragOriginOffset_ are cached once the drag axis
+  // locks so later moves (which recompose a shrinking capture_ each frame)
+  // don't re-derive them from a live preview that has already collapsed.
+  bool cutDragActive_ = false;
+  QPointF cutDragStart_;
+  CutOp liveCut_;
+  qreal cutBandLo_ = 0.0;
+  qreal cutBandHi_ = 0.0;
+  qreal cutDragRatio_ = 1.0;
+  qreal cutDragOriginOffset_ = 0.0;
   bool windowMode_ = false;
   BackgroundStyle backgroundStyle_ = BackgroundStyle::None;
   bool busy_ = false;

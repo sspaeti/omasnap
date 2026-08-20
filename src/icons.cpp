@@ -80,6 +80,16 @@ void drawToolbarIcon(QPainter &painter, const QRectF &bounds,
           painter.drawRect(QRectF(x, y, 3, 3));
       }
     }
+  } else if (action == QStringLiteral("tool-cut")) {
+    painter.drawLine(QPointF(5, 5), QPointF(19, 19));
+    painter.drawLine(QPointF(19, 5), QPointF(5, 19));
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(color);
+    painter.drawEllipse(QPointF(12, 12), 1.5, 1.5);
+    painter.setPen(QPen(color, 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawEllipse(QPointF(5, 5), 2.4, 2.4);
+    painter.drawEllipse(QPointF(5, 19), 2.4, 2.4);
   } else if (action == QStringLiteral("tool-text")) {
     painter.drawLine(QPointF(5, 5), QPointF(19, 5));
     painter.drawLine(QPointF(12, 5), QPointF(12, 19));

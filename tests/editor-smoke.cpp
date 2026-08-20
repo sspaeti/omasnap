@@ -1204,6 +1204,137 @@ bool runContinuousAnnotationToolsSmoke(QApplication &application,
   editor.close();
   return true;
 }
+
+/**
+ * Exercises the cut tool end to end: tool selection/cursor, a plain click
+ * being a no-op, a vertical drag removing a horizontal band (height
+ * shrinks), a horizontal drag removing a vertical band (width shrinks), and
+ * undo/redo restoring/reapplying both cuts. The synthetic capture is 1:1
+ * (source size == previewSize), so annotation-space, logical, and native
+ * source px all coincide and the editor's display scale is exactly 1.0 for
+ * every selection size used here (see editImageRect()'s available-rect math:
+ * a 600-wide, <=400-tall selection always fits under scale 1.0 in an 800x600
+ * widget), which keeps the expected band sizes exact integers.
+ */
+bool runCutToolSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(700, 500));
+  application.processEvents();
+
+  const QImage originalOutput = editor.renderCurrentOutput();
+  if (originalOutput.isNull()) {
+    error = QStringLiteral("Cut smoke: initial selection produced no output");
+    return false;
+  }
+  const int originalWidth = originalOutput.width();
+  const int originalHeight = originalOutput.height();
+
+  QTest::keyClick(&editor, Qt::Key_X);
+  application.processEvents();
+  if (editor.cursor().shape() != Qt::CrossCursor) {
+    error = QStringLiteral("Cut tool did not set cross cursor");
+    return false;
+  }
+
+  // A plain click never crosses the drag-activation threshold, so it must
+  // be a no-op.
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 200));
+  application.processEvents();
+  if (editor.renderCurrentOutput() != originalOutput) {
+    error = QStringLiteral("Plain click with the cut tool changed the output");
+    return false;
+  }
+
+  // Dominant-vertical delta locks a horizontal band (rows removed): the
+  // image collapses vertically, so height shrinks by the band size.
+  constexpr int band1 = 60;
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(150, 200));
+  QTest::mouseMove(&editor, QPoint(150, 200 + band1), 10);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(150, 200 + band1));
+  application.processEvents();
+
+  const QImage afterCut1 = editor.renderCurrentOutput();
+  if (afterCut1.width() != originalWidth ||
+      afterCut1.height() != originalHeight - band1) {
+    error = QStringLiteral(
+                "Vertical drag did not shrink height by the band size: "
+                "expected %1x%2, got %3x%4")
+                .arg(originalWidth)
+                .arg(originalHeight - band1)
+                .arg(afterCut1.width())
+                .arg(afterCut1.height());
+    return false;
+  }
+
+  // Dominant-horizontal delta locks a vertical band (columns removed):
+  // width shrinks by the band size, height stays as cut1 left it.
+  constexpr int band2 = 80;
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 200));
+  QTest::mouseMove(&editor, QPoint(300 + band2, 200), 10);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(300 + band2, 200));
+  application.processEvents();
+
+  const QImage afterCut2 = editor.renderCurrentOutput();
+  if (afterCut2.width() != originalWidth - band2 ||
+      afterCut2.height() != originalHeight - band1) {
+    error = QStringLiteral(
+                "Horizontal drag did not shrink width by the band size: "
+                "expected %1x%2, got %3x%4")
+                .arg(originalWidth - band2)
+                .arg(originalHeight - band1)
+                .arg(afterCut2.width())
+                .arg(afterCut2.height());
+    return false;
+  }
+
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  const QImage afterUndo = editor.renderCurrentOutput();
+  if (afterUndo.width() != originalWidth || afterUndo.height() != originalHeight) {
+    error = QStringLiteral(
+                "Two undoEdit calls did not restore the original size: got %1x%2")
+                .arg(afterUndo.width())
+                .arg(afterUndo.height());
+    return false;
+  }
+
+  QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+  application.processEvents();
+  const QImage afterRedo = editor.renderCurrentOutput();
+  if (afterRedo.width() != afterCut2.width() ||
+      afterRedo.height() != afterCut2.height()) {
+    error = QStringLiteral(
+                "Two redoEdit calls did not reapply both cuts: got %1x%2")
+                .arg(afterRedo.width())
+                .arg(afterRedo.height());
+    return false;
+  }
+
+  editor.close();
+  return true;
+}
+
 bool runAsyncCaptureRegionSmoke(QApplication &application, QString &error) {
   QTemporaryDir commands;
   if (!commands.isValid()) {
@@ -1500,6 +1631,10 @@ int main(int argc, char **argv) {
   if (!runSpotlightWheelSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 94;
+  }
+  if (!runCutToolSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 95;
   }
   const QString outputRoot =
       argc > 1 ? QString::fromLocal8Bit(argv[1])
