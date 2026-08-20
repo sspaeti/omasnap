@@ -45,6 +45,8 @@ qt_add_executable(omasnap
   src/pin-layout.hpp
   src/capture.cpp
   src/capture.hpp
+  src/cut.cpp
+  src/cut.hpp
   src/eyedropper.cpp
   src/eyedropper.hpp
   src/surface-capture.cpp
@@ -93,6 +95,10 @@ qt_add_executable(omasnap-smoke
   src/cli-path.hpp
   src/capture.cpp
   src/capture.hpp
+  src/cut.cpp
+  src/cut.hpp
+  tests/cut-smoke.cpp
+  tests/cut-smoke.hpp
   tests/surface-capture-smoke.cpp
   tests/surface-capture-smoke.hpp
   ${PROTOCOL_SOURCES}

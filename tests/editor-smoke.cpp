@@ -3,6 +3,7 @@
 #include "capture.hpp"
 #include "cli-path.hpp"
 #include "clipboard-smoke.hpp"
+#include "cut-smoke.hpp"
 #include "editor.hpp"
 #include "instance-lock-smoke.hpp"
 #include "pin-layout-smoke.hpp"
@@ -2408,6 +2409,13 @@ int main(int argc, char **argv) {
     qWarning().noquote() << transformError;
     return 67;
   }
+
+  QString cutError;
+  if (!runCutSmoke(cutError)) {
+    qWarning().noquote() << "cut smoke failed:" << cutError;
+    return EXIT_FAILURE;
+  }
+
   QString instanceError;
   if (!runInstanceLockSmoke(instanceError)) {
     qWarning().noquote() << instanceError;
