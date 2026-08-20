@@ -1,6 +1,7 @@
 #pragma once
 
 #include "capture.hpp"
+#include "palette-config.hpp"
 
 #include <QElapsedTimer>
 #include <QFutureWatcher>
@@ -195,6 +196,7 @@ private:
   bool usingCustomColor_ = false;
   int hoveredWindow_ = -1;
   int colorIndex_ = 0;
+  PaletteConfig paletteConfig_ = defaultPaletteConfig();
   QColor customColor_ = QColor(QStringLiteral("#ff375f"));
   qreal customHue_ = 0.98;
   int nextMarker_ = 1;

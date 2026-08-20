@@ -3,6 +3,7 @@
 #include "editor.hpp"
 #include "icons.hpp"
 #include "eyedropper.hpp"
+#include "palette-config.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -35,8 +36,6 @@
 #include <numbers>
 
 namespace {
-constexpr std::array<const char *, 6> kColorNames{
-    "#ff375f", "#ff9f0a", "#ffd60a", "#30d158", "#0a84ff", "#bf5af2"};
 constexpr std::array<qreal, 3> kTextSizes{2.0, 5.0, 9.0};
 constexpr std::array<const char *, 3> kTextSizeNames{"S", "M", "L"};
 constexpr qreal kToolbarWidth = 760;
@@ -245,6 +244,8 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
                              QuickOutputMode quickOutput, QWidget *parent)
     : QWidget(parent), capture_(std::move(capture)),
       quickOutputMode_(quickOutput) {
+  paletteConfig_ = loadPaletteConfig(defaultPaletteConfigPath());
+  customColor_ = paletteConfig_.custom;
   setWindowTitle(QStringLiteral("Omasnap"));
   setWindowFlags(Qt::Window | Qt::FramelessWindowHint |
                  Qt::WindowStaysOnTopHint);
@@ -436,8 +437,7 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
 QColor CaptureEditor::annotationColor() const {
   if (usingCustomColor_)
     return customColor_;
-  return QColor(QString::fromLatin1(
-      kColorNames.at(static_cast<std::size_t>(colorIndex_))));
+  return paletteConfig_.palette.at(static_cast<std::size_t>(colorIndex_));
 }
 QRectF CaptureEditor::annotationBounds(const Annotation &annotation) const {
   if (annotation.kind == Annotation::Kind::Marker) {
@@ -888,8 +888,7 @@ QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
            QStringLiteral("color-%1").arg(index),
            {},
            QStringLiteral("Color · %1").arg(index + 1),
-           QColor(QString::fromLatin1(
-               kColorNames.at(static_cast<std::size_t>(index))))});
+           paletteConfig_.palette.at(static_cast<std::size_t>(index))});
     }
     buttons.push_back({{palette.left() + 4 + 6 * 28, palette.top() + 4, 24, 28},
                        QStringLiteral("custom-color"), {},
