@@ -54,10 +54,20 @@ QImage composeCuts(const QImage &pristine, const QVector<CutOp> &cuts) {
 QSize composedLogicalSize(QSize pristineLogical, const QVector<CutOp> &cuts) {
   for (const CutOp &cut : cuts) {
     const int band = cut.logicalEnd - cut.logicalStart;
-    if (cut.orientation == Qt::Horizontal)
-      pristineLogical.setHeight(std::max(1, pristineLogical.height() - band));
-    else
-      pristineLogical.setWidth(std::max(1, pristineLogical.width() - band));
+    if (cut.orientation == Qt::Horizontal) {
+      const int extent = pristineLogical.height();
+      // Mirror removeBand()'s no-op guard so this can never disagree with
+      // what composeCuts() actually produces: an empty or full-extent band
+      // leaves the image unchanged.
+      if (band <= 0 || band >= extent)
+        continue;
+      pristineLogical.setHeight(std::max(1, extent - band));
+    } else {
+      const int extent = pristineLogical.width();
+      if (band <= 0 || band >= extent)
+        continue;
+      pristineLogical.setWidth(std::max(1, extent - band));
+    }
   }
   return pristineLogical;
 }

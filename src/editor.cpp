@@ -306,7 +306,12 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
   connect(&snapshotWatcher_, &QFutureWatcher<bool>::finished, this, [this] {
     snapshotBusy_ = false;
     snapshotWriteOk_ = snapshotWatcher_.result();
-    if (snapshotDirty_)
+    // Don't chain a re-render while a cut drag is live: capture_ is
+    // transiently composed with liveCut_ mid-drag, and copying it here would
+    // persist a phantom cut into the crash-recovery snapshot. snapshotDirty_
+    // stays set, so the cut's own scheduleSnapshot() call on release (or
+    // cancellation) picks the committed state back up.
+    if (snapshotDirty_ && !cutDragActive_)
       startSnapshotRender();
   });
 
@@ -323,6 +328,7 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
             capture_ = job.capture;
             pristineSource_ = capture_.source;
             pristineLogicalSize_ = capture_.previewSize;
+            cuts_.clear();
             redactionBaseStale_ = true;
             switch (pendingMode_) {
             case CaptureMode::Fullscreen:
@@ -363,6 +369,7 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
     capture_.previewSize = job.scaledSize;
     pristineSource_ = capture_.source;
     pristineLogicalSize_ = capture_.previewSize;
+    cuts_.clear();
     selection_ = QRectF(QPointF(), job.scaledSize);
     redactionBaseStale_ = true;
     windowMode_ = false;
@@ -1511,6 +1518,19 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     return;
   }
 
+  if (cutDragActive_) {
+    // Any key here (Esc's own cancel already returned above) leaves the
+    // live cut with no clean way to finish: Enter/Ctrl+C/Ctrl+S/P would
+    // export/pin capture_ still composed with liveCut_, and a tool-switch
+    // key changes tool_ so mouseReleaseEvent's Cut branch never runs,
+    // stranding cutDragActive_. Cancel first, same cleanup as
+    // handleEscape(), then let the key's own handling run below.
+    cutDragActive_ = false;
+    dragging_ = false;
+    refreshComposedCapture();
+    setStatus(QStringLiteral("Cut cancelled"));
+  }
+
   const bool redoShortcut = event->matches(QKeySequence::Redo) ||
                             (event->key() == Qt::Key_Y &&
                              event->modifiers().testFlag(Qt::ControlModifier));
@@ -2209,12 +2229,28 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
       update();
       return;
     }
-    recordEdit(); // push pre-cut state (with the OLD selection/annotations)
-    cuts_.push_back(liveCut_);
     const qreal lo = cutBandLo_;
     const qreal hi = cutBandHi_;
     const bool horizontal = liveCut_.orientation == Qt::Horizontal;
     const qreal band = hi - lo;
+    const qreal extent =
+        horizontal ? selection_.height() : selection_.width();
+    if (band <= 0.0 || band >= extent) {
+      // Full-extent (or empty) band: toAnnotationPoint clamps lo/hi to
+      // [0, extent], so an edge-to-edge drag on a full selection lands
+      // exactly here. removeBand() no-ops on this band, so applying it
+      // would still shrink composedLogicalSize/selection_ while the actual
+      // pixels don't shrink -- desyncing preview size from the source
+      // aspect. Bail out instead.
+      cutDragActive_ = false;
+      refreshComposedCapture();
+      setStatus(QStringLiteral("Cut too large — nothing left"));
+      updatePointerCursor();
+      update();
+      return;
+    }
+    recordEdit(); // push pre-cut state (with the OLD selection/annotations)
+    cuts_.push_back(liveCut_);
     for (Annotation &annotation : annotations_) {
       // Shift every stored coordinate on the cut axis: horizontal cut shifts
       // y values, vertical cut shifts x values.

@@ -70,6 +70,16 @@ bool runCutSmoke(QString &error) {
     return false;
   }
 
+  // A full-extent band is a no-op in removeBand(); composedLogicalSize must
+  // agree and leave the size unchanged rather than shrinking it (which would
+  // desync the preview size from the actual, unchanged pixels).
+  const QVector<CutOp> fullExtentCut{{Qt::Horizontal, 0, 80, 0, 80}};
+  if (composedLogicalSize(QSize(100, 80), fullExtentCut) != QSize(100, 80)) {
+    error = QStringLiteral(
+        "composedLogicalSize shrank on a full-extent band");
+    return false;
+  }
+
   // Coordinate shifting: before band unchanged, inside clamps to seam,
   // after shifts back by the band size.
   if (shiftForCut(3.0, 5.0, 10.0) != 3.0 ||

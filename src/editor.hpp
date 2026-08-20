@@ -218,7 +218,7 @@ private:
   int hoveredWindow_ = -1;
   int colorIndex_ = 0;
   PaletteConfig paletteConfig_ = defaultPaletteConfig();
-  QColor customColor_ = QColor(QStringLiteral("#ff375f"));
+  QColor customColor_;
   qreal customHue_ = 0.98;
   int nextMarker_ = 1;
   qreal annotationSize_ = 4.0;
