@@ -14,6 +14,7 @@
 #include <QDir>
 #include <QEvent>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QFontMetrics>
@@ -25,6 +26,7 @@
 #include <QProcess>
 #include <QRandomGenerator>
 #include <QScreen>
+#include <QSettings>
 #include <QThread>
 #include <QTimer>
 #include <QWheelEvent>
@@ -1364,6 +1366,68 @@ void CaptureEditor::finish(OutputMode mode) {
   close();
 }
 
+void CaptureEditor::saveAs() {
+  // Ctrl+Shift+S: pick a destination, write a copy there, and keep the
+  // editor open so Enter/Ctrl+C/Ctrl+S still produce the default outputs.
+  if (busy_ || selection_.isEmpty())
+    return;
+  busy_ = true;
+  setStatus(QStringLiteral("Preparing screenshot…"));
+  snapshotOutputRequested_ = true;
+  scheduleSnapshot();
+  const bool snapshotOk = waitForSnapshot();
+  // Later mid-edit writes go back to the fast crash-recovery compression.
+  snapshotOutputRequested_ = false;
+  const QFileInfo snapshotFile(snapshotPath_);
+  if (!snapshotOk || snapshotPath_.isEmpty() || !snapshotFile.exists() ||
+      snapshotFile.size() <= 0) {
+    busy_ = false;
+    setStatus(QStringLiteral("Could not prepare screenshot snapshot"));
+    return;
+  }
+
+  QSettings settings(defaultPaletteConfigPath(), QSettings::IniFormat);
+  QString startDir =
+      settings.value(QStringLiteral("output/save_as_dir")).toString();
+  if (startDir.isEmpty() || !QDir(startDir).exists())
+    startDir = screenshotRootDir();
+  const QString suggested =
+      QDir(startDir).filePath(defaultScreenshotFileName());
+  // The editor is a fullscreen stays-on-top surface, so a dialog opened on
+  // top of it ends up buried behind it with no way to reach either window.
+  // Hide the overlay for the dialog's lifetime (parent nullptr keeps the
+  // dialog mapped while the editor is hidden), then restore it.
+  hide();
+  QString target = QFileDialog::getSaveFileName(
+      nullptr, QStringLiteral("Save screenshot as"), suggested,
+      QStringLiteral("PNG image (*.png)"));
+  show();
+  raise();
+  activateWindow();
+  if (target.isEmpty()) {
+    busy_ = false;
+    setStatus(QStringLiteral("Save As cancelled"));
+    return;
+  }
+  if (!target.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
+    target += QStringLiteral(".png");
+  if (QFile::exists(target) && !QFile::remove(target)) {
+    busy_ = false;
+    setStatus(QStringLiteral("Could not overwrite: %1").arg(target));
+    return;
+  }
+  if (!QFile::copy(snapshotPath_, target)) {
+    busy_ = false;
+    setStatus(QStringLiteral("Could not save to: %1").arg(target));
+    return;
+  }
+  settings.setValue(QStringLiteral("output/save_as_dir"),
+                    QFileInfo(target).absolutePath());
+  busy_ = false;
+  setStatus(QStringLiteral("Saved to %1").arg(target));
+  sendCaptureNotification(QStringLiteral("Screenshot saved"), target);
+}
+
 void CaptureEditor::handleToolbar(const QString &action) {
   if (action == QStringLiteral("tool-select"))
     tool_ = Tool::Select;
@@ -1540,6 +1604,12 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     undoEdit();
   } else if (event->matches(QKeySequence::Copy)) {
     finish(OutputMode::Copy);
+    return;
+  } else if (event->matches(QKeySequence::SaveAs) ||
+             (event->key() == Qt::Key_S &&
+              event->modifiers().testFlag(Qt::ControlModifier) &&
+              event->modifiers().testFlag(Qt::ShiftModifier))) {
+    saveAs();
     return;
   } else if (event->matches(QKeySequence::Save)) {
     // Personal tweak: Ctrl+S saves and copies, matching the Enter habit.
@@ -2908,6 +2978,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
        {QStringLiteral("Enter"), QStringLiteral("Copy + save")},
        {QStringLiteral("Ctrl+C"), QStringLiteral("Copy only")},
        {QStringLiteral("Ctrl+S"), QStringLiteral("Save + copy")},
+       {QStringLiteral("Ctrl+Shift+S"), QStringLiteral("Save As…")},
        {QStringLiteral("Esc"), QStringLiteral("Arrow / twice close")}});
   if (hoveredButton) {
     drawInstantTooltip(painter, rect(), hoveredButton->rect,
