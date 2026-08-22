@@ -277,6 +277,8 @@ Environment overrides:
 ```bash
 OMASNAP_SCREENSHOT_DIR="$HOME/Pictures/Captures" omasnap
 OMASNAP_OCR_LANGS="eng+deu" omasnap
+# Diagnose a scrolling capture: dump every frame and per-frame match data
+OMASNAP_SCROLL_DEBUG="/tmp/scroll-debug" omasnap scroll
 # Thai plus English:
 OMASNAP_OCR_LANGS="tha+eng" omasnap
 ```

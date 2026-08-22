@@ -14,6 +14,10 @@ struct ScrollFrameMatch {
   int headerRows = 0;
   /** Static band pinned to the bottom of the viewport (sticky footer). */
   int footerRows = 0;
+  /** Mean luma cost of "nothing moved", for OMASNAP_SCROLL_DEBUG logs. */
+  double stillCost = 0.0;
+  /** Mean luma cost of the best non-zero offset, for the same logs. */
+  double bestCost = 0.0;
 };
 
 /**

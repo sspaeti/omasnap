@@ -23,8 +23,6 @@ constexpr int kSignatureColumns = 64;
 constexpr double kStaticRowTolerance = 3.0;
 /** Mean per-sample luma difference below which an alignment is accepted. */
 constexpr double kMatchTolerance = 4.0;
-/** Rows two frames must share for the offset search to be trustworthy. */
-constexpr int kMinOverlapRows = 48;
 constexpr int kMaxScrollFrames = 80;
 constexpr int kSettlePollMs = 70;
 constexpr int kSettleTimeoutMs = 900;
@@ -116,10 +114,14 @@ ScrollFrameMatch matchScrollFrames(const QImage &previous,
       alignmentCost(before, after, 0, top, contentBottom);
 
   // Every offset is tried: sharp content (text) only dips to a low cost at
-  // the exact alignment, so a strided search would step right over it.
+  // the exact alignment, so a strided search would step right over it. The
+  // overlap floor adapts to the viewport: a browser paged in a quarter-tile
+  // window leaves only a dozen shared rows, and a fixed floor of a few dozen
+  // rows would place the true offset outside the search range entirely.
   int bestOffset = 0;
   double bestCost = kMatchTolerance + 1.0;
-  const int maxOffset = contentBottom - top - kMinOverlapRows;
+  const int minOverlap = std::max(8, (contentBottom - top) / 80);
+  const int maxOffset = contentBottom - top - minOverlap;
   for (int offset = 1; offset <= maxOffset; ++offset) {
     const double cost =
         alignmentCost(before, after, offset, top, contentBottom - offset);
@@ -131,6 +133,8 @@ ScrollFrameMatch matchScrollFrames(const QImage &previous,
     }
   }
 
+  match.stillCost = stillCost;
+  match.bestCost = bestCost;
   if (stillCost <= kMatchTolerance && stillCost <= bestCost) {
     match.matched = true;
     match.offset = 0;
@@ -138,6 +142,8 @@ ScrollFrameMatch matchScrollFrames(const QImage &previous,
     match.matched = true;
     match.offset = bestOffset;
   }
+  if (bestOffset > 0 && !match.matched)
+    match.offset = bestOffset; // best candidate, for the debug log only
   return match;
 }
 
@@ -241,6 +247,70 @@ bool queryActiveWindow(ActiveWindow &window, QString &error) {
   return true;
 }
 
+bool queryCursorPosition(QPoint &position) {
+  QByteArray output;
+  QString error;
+  if (!runHyprctl({QStringLiteral("cursorpos"), QStringLiteral("-j")}, output,
+                  error))
+    return false;
+  const QJsonObject object = QJsonDocument::fromJson(output).object();
+  if (!object.contains(QStringLiteral("x")))
+    return false;
+  position = QPoint(object.value(QStringLiteral("x")).toInt(),
+                    object.value(QStringLiteral("y")).toInt());
+  return true;
+}
+
+void moveCursor(const QPoint &position) {
+  QByteArray output;
+  QString error;
+  static_cast<void>(runHyprctl(
+      {QStringLiteral("dispatch"),
+       QStringLiteral("hl.dsp.cursor.move({ x = %1, y = %2 })")
+           .arg(position.x())
+           .arg(position.y())},
+      output, error));
+}
+
+/**
+ * A monitor corner for the pointer to wait in while frames are captured.
+ * Hover styling follows the pointer through the scrolling page — link
+ * highlights, the browser's link-target bubble — and repaints a fresh
+ * artifact into every frame, so the pointer must not rest on the window.
+ * Bottom corners are preferred: the top edge belongs to the bar, whose
+ * hover popups could drop down over the window.
+ */
+QPoint parkedCursorPosition(const MonitorInfo &monitor,
+                            const QRect &monitorRect) {
+  const QRect bounds(QPoint(0, 0), monitor.geometry.size());
+  const QPoint corners[] = {bounds.bottomRight(), bounds.bottomLeft(),
+                            bounds.topRight(), bounds.topLeft()};
+  for (const QPoint &corner : corners) {
+    if (!monitorRect.adjusted(-8, -8, 8, 8).contains(corner))
+      return monitor.geometry.topLeft() + corner;
+  }
+  return monitor.geometry.topLeft() + bounds.bottomRight();
+}
+
+/** Parks the pointer for the capture and puts it back afterwards. */
+class CursorPark {
+public:
+  explicit CursorPark(const QPoint &parkAt)
+      : hadPosition_(queryCursorPosition(position_)) {
+    moveCursor(parkAt);
+  }
+  ~CursorPark() {
+    if (hadPosition_)
+      moveCursor(position_);
+  }
+  CursorPark(const CursorPark &) = delete;
+  CursorPark &operator=(const CursorPark &) = delete;
+
+private:
+  QPoint position_;
+  bool hadPosition_ = false;
+};
+
 bool sendPageDown(const QString &address, QString &error) {
   QByteArray output;
   return runHyprctl(
@@ -313,10 +383,40 @@ bool runScrollCapture(const MonitorInfo &monitor, const QString &address,
     return false;
   }
 
+  const QString debugDirectory =
+      qEnvironmentVariable("OMASNAP_SCROLL_DEBUG");
+  const auto debugDump = [&debugDirectory](const QImage &frame, int index,
+                                           const ScrollFrameMatch *match) {
+    if (debugDirectory.isEmpty())
+      return;
+    frame.save(QStringLiteral("%1/scroll-frame-%2.png")
+                   .arg(debugDirectory)
+                   .arg(index, 2, 10, QChar('0')));
+    if (match)
+      qInfo().noquote()
+          << QStringLiteral("scroll debug: frame %1 matched %2 offset %3 "
+                            "header %4 footer %5 stillCost %6 bestCost %7")
+                 .arg(index)
+                 .arg(match->matched)
+                 .arg(match->offset)
+                 .arg(match->headerRows)
+                 .arg(match->footerRows)
+                 .arg(match->stillCost, 0, 'f', 2)
+                 .arg(match->bestCost, 0, 'f', 2);
+  };
+
+  const CursorPark parkedCursor(parkedCursorPosition(monitor, monitorRect));
+  // Let hover styling the pointer leaves behind fade before the base frame.
+  QThread::msleep(120);
+
+  // The first frame settles too: launched from the capture overlay, the
+  // overlay's fade-out is still repainting the screen for a few hundred
+  // milliseconds, and a veiled base frame would never match the clean pages.
   QImage first;
-  if (!captureWindowFrame(monitor, nativeRect, first, error))
+  if (!captureSettledFrame(monitor, nativeRect, first, error))
     return false;
   ScrollStitcher stitcher(first);
+  debugDump(first, 0, nullptr);
 
   int frames = 1;
   bool reachedBottom = false;
@@ -327,12 +427,14 @@ bool runScrollCapture(const MonitorInfo &monitor, const QString &address,
     if (!captureSettledFrame(monitor, nativeRect, frame, error))
       return false;
     ScrollFrameMatch match = stitcher.append(frame);
+    debugDump(frame, frames, &match);
     if (!match.matched) {
       // One retry after extra settling; animated content can spoil a frame.
       QThread::msleep(250);
       if (!captureSettledFrame(monitor, nativeRect, frame, error))
         return false;
       match = stitcher.append(frame);
+      debugDump(frame, frames, &match);
     }
     if (!match.matched)
       break;
