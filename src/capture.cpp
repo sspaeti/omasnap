@@ -262,7 +262,8 @@ QVector<WindowTarget> parseWindows(const QByteArray &json,
       title = object.value(QStringLiteral("class"))
                   .toString(QStringLiteral("window"));
     result.push_back({rect, object.value(QStringLiteral("stableId")).toString(),
-                      std::move(title)});
+                      std::move(title),
+                      object.value(QStringLiteral("address")).toString()});
   }
   return result;
 }

@@ -292,17 +292,24 @@ bool runScrollCapture(QImage &stitched, QString &error) {
   MonitorInfo monitor;
   if (!probeFocusedMonitor(monitor, error))
     return false;
+  return runScrollCapture(
+      monitor, window.address,
+      window.logicalRect.translated(-monitor.geometry.topLeft()), window.title,
+      stitched, error);
+}
 
-  const QRect translated =
-      window.logicalRect.translated(-monitor.geometry.topLeft());
+bool runScrollCapture(const MonitorInfo &monitor, const QString &address,
+                      const QRect &monitorRect, const QString &title,
+                      QImage &stitched, QString &error) {
   const QRect nativeRect =
-      QRect(qRound(translated.x() * monitor.scale),
-            qRound(translated.y() * monitor.scale),
-            qRound(translated.width() * monitor.scale),
-            qRound(translated.height() * monitor.scale))
+      QRect(qRound(monitorRect.x() * monitor.scale),
+            qRound(monitorRect.y() * monitor.scale),
+            qRound(monitorRect.width() * monitor.scale),
+            qRound(monitorRect.height() * monitor.scale))
           .intersected(QRect(QPoint(0, 0), monitor.pixelSize));
   if (nativeRect.isEmpty()) {
-    error = QStringLiteral("Focused window is outside the focused monitor");
+    error = QStringLiteral("The window to scroll is outside the focused "
+                           "monitor");
     return false;
   }
 
@@ -314,7 +321,7 @@ bool runScrollCapture(QImage &stitched, QString &error) {
   int frames = 1;
   bool reachedBottom = false;
   while (frames < kMaxScrollFrames && !stitcher.heightCapped()) {
-    if (!sendPageDown(window.address, error))
+    if (!sendPageDown(address, error))
       return false;
     QImage frame;
     if (!captureSettledFrame(monitor, nativeRect, frame, error))
@@ -341,7 +348,7 @@ bool runScrollCapture(QImage &stitched, QString &error) {
       << QStringLiteral("Scroll capture stitched %1 frames of \"%2\" into "
                         "%3x%4%5")
              .arg(frames)
-             .arg(window.title)
+             .arg(title)
              .arg(stitched.width())
              .arg(stitched.height())
              .arg(reachedBottom ? QString()

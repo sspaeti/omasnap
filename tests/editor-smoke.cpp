@@ -307,11 +307,13 @@ bool runSelectUndimHoleCheck(QString &error) {
     CaptureEditor editor(capture);
     prepareSelectEditor(editor, widget);
     QTest::keyClick(&editor, Qt::Key_Space);
-    QTest::mouseMove(&editor, QPoint(100, 90), 20);
+    // y 110, not 90: the three-row hotkey legend reaches y 95 and spans the
+    // whole width of this tiny widget, and the probe must sample the hole.
+    QTest::mouseMove(&editor, QPoint(100, 110), 20);
     QApplication::processEvents();
     const QImage ui = editor.grab().toImage();
     if (!expectUndimmedHole(ui, editor, capture.source, widget, 1.0,
-                            QRectF(windowRect), QPointF(100, 90), QPointF(20, 200),
+                            QRectF(windowRect), QPointF(100, 110), QPointF(20, 200),
                             QStringLiteral("Mismatched window"), error))
       return false;
   }
@@ -385,11 +387,12 @@ bool runSelectUndimHoleCheck(QString &error) {
     CaptureEditor editor(capture);
     prepareSelectEditor(editor, widget);
     QTest::keyClick(&editor, Qt::Key_Space);
-    QTest::mouseMove(&editor, QPoint(100, 90), 20);
+    // y 110, not 90: the three-row hotkey legend reaches y 95 in this widget.
+    QTest::mouseMove(&editor, QPoint(100, 110), 20);
     QApplication::processEvents();
     const QImage ui = editor.grab().toImage();
     if (!expectUndimmedHole(ui, editor, capture.source, widget, 2.0,
-                            QRectF(windowRect), QPointF(100, 90), QPointF(20, 200),
+                            QRectF(windowRect), QPointF(100, 110), QPointF(20, 200),
                             QStringLiteral("Scale 2.0 mismatched window"),
                             error))
       return false;
@@ -2310,6 +2313,67 @@ bool runOpLogCapKeepsLeadingCrop(QApplication &application, QString &error) {
 /** Runs the interaction and rendering smoke checks. */
 /** Runs the interaction and rendering smoke checks. */
 /** Runs the interaction and rendering smoke checks. */
+/** The S key in the selection overlay must hand back a scroll-capture
+ *  request for the hovered window and close the overlay; without a window
+ *  under the pointer it must stay open and just explain itself. */
+bool runScrollRequestSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  capture.windows.push_back({QRect(80, 90, 400, 300), QStringLiteral("1"),
+                             QStringLiteral("scrollable"),
+                             QStringLiteral("0xabc123")});
+
+  {
+    CaptureEditor editor(capture, CaptureEditor::CaptureMode::Window);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    QTest::mouseMove(&editor, QPoint(200, 200));
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_S);
+    application.processEvents();
+    const CaptureEditor::ScrollRequest &request = editor.scrollRequest();
+    if (!request.requested ||
+        request.address != QStringLiteral("0xabc123") ||
+        request.monitorRect != QRect(80, 90, 400, 300)) {
+      error = QStringLiteral("S over a window did not produce the scroll "
+                             "request (requested %1, address %2)")
+                  .arg(request.requested)
+                  .arg(request.address);
+      return false;
+    }
+    if (editor.isVisible()) {
+      error = QStringLiteral("The overlay stayed open after requesting a "
+                             "scroll capture");
+      return false;
+    }
+  }
+
+  {
+    CaptureEditor editor(capture, CaptureEditor::CaptureMode::Region);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    QTest::mouseMove(&editor, QPoint(700, 550)); // outside the only window
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_S);
+    application.processEvents();
+    if (editor.scrollRequest().requested || !editor.isVisible()) {
+      error = QStringLiteral("S without a hovered window must keep the "
+                             "overlay open and request nothing");
+      return false;
+    }
+    editor.close();
+  }
+  return true;
+}
+
 /** Checks that a modifier left over from the launch binding is not believed.
  *  A binding with a modifier in it, such as the README's ALT + SHIFT + 4,
  *  leaves that modifier held as the overlay takes keyboard focus. Its release
@@ -4752,6 +4816,10 @@ int main(int argc, char **argv) {
   if (!runScrollStitchSmoke(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 131;
+  }
+  if (!runScrollRequestSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 132;
   }
   if (!runStuckModifierSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;

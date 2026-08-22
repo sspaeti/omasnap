@@ -10,11 +10,12 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
 ## Features
 
 - Freeform region, window, and full-monitor capture modes.
-- Scrolling capture: `omasnap scroll` pages the focused window down and stitches
-  the frames into one tall image — a full web page, chat log, or document.
-  Sticky headers and footers are detected and kept exactly once. Works on
-  anything that scrolls on `Page Down`; the page is scrolled via the
-  compositor, so focus never moves and no browser extension is needed.
+- Scrolling capture: press `S` on a window in the capture overlay (or run
+  `omasnap scroll`) to page it down and stitch the frames into one tall
+  image — a full web page, chat log, or document. Sticky headers and footers
+  are detected and kept exactly once. Works on anything that scrolls on
+  `Page Down`; the page is scrolled via the compositor, so focus never moves
+  and no browser extension is needed.
 - A pointer-side readout that turns any drag into a ruler: the pointer position
   while the crosshair is idle, then the frame size in native export pixels while a
   region, a hovered window, or a crop handle is being sized.
@@ -183,8 +184,16 @@ with `--file`, `--clipboard`, or `--pin`.
 
 ### Scrolling capture
 
-`omasnap scroll` captures the entire scrollable content of the focused window,
-not just the visible viewport. It sends `Page Down` directly to the window
+A scrolling capture takes the entire scrollable content of a window, not just
+the visible viewport. Two ways in:
+
+- From the capture overlay: point at the window and press `S` (in area or
+  window mode). The overlay closes itself, the window is paged and stitched,
+  and the result opens in the editor.
+- Directly: `omasnap scroll` scroll-captures the currently focused window
+  without opening the overlay first.
+
+It sends `Page Down` directly to the window
 through the compositor (`hyprctl dispatch send_shortcut`), recaptures after
 each page settles, and aligns consecutive frames by image content:
 
@@ -286,6 +295,7 @@ Install the corresponding Tesseract language data before adding a language to
 | `Space` | Toggle region/window selection |
 | `SUPER + Arrow` | Move among windows in window mode |
 | `Enter` | Capture the highlighted window |
+| `S` | Scroll-capture the window under the pointer (see Scrolling capture) |
 | `Ctrl+A` | Select the full focused monitor |
 | `Esc`, `Esc` | Dismiss |
 

@@ -400,32 +400,82 @@ int main(int argc, char **argv) {
                              .arg(capture.windows.size());
   }
 
-  CaptureEditor editor(std::move(capture), captureMode, quickOutputMode,
-                       restoredLog);
-  editor.setScreen(targetScreen);
-  editor.setGeometry(targetScreen->geometry());
-  editor.winId();
-  QWindow *window = editor.windowHandle();
-  LayerShellQt::Window *layerWindow = LayerShellQt::Window::get(window);
-  if (!window || !layerWindow) {
+  const auto mapOverlay = [targetScreen](CaptureEditor &editor) -> bool {
+    editor.setScreen(targetScreen);
+    editor.setGeometry(targetScreen->geometry());
+    editor.winId();
+    QWindow *window = editor.windowHandle();
+    LayerShellQt::Window *layerWindow = LayerShellQt::Window::get(window);
+    if (!window || !layerWindow)
+      return false;
+    layerWindow->setScope(QStringLiteral("omasnap"));
+    layerWindow->setScreen(targetScreen);
+    layerWindow->setLayer(LayerShellQt::Window::LayerOverlay);
+    LayerShellQt::Window::Anchors anchors;
+    anchors.setFlag(LayerShellQt::Window::AnchorTop);
+    anchors.setFlag(LayerShellQt::Window::AnchorBottom);
+    anchors.setFlag(LayerShellQt::Window::AnchorLeft);
+    anchors.setFlag(LayerShellQt::Window::AnchorRight);
+    layerWindow->setAnchors(anchors);
+    layerWindow->setExclusiveZone(-1);
+    layerWindow->setKeyboardInteractivity(
+        LayerShellQt::Window::KeyboardInteractivityExclusive);
+    layerWindow->setActivateOnShow(true);
+    editor.show();
+    editor.setFocus(Qt::ActiveWindowFocusReason);
+    return true;
+  };
+
+  // The selection overlay can hand back a scroll-capture request (the S key).
+  // It runs after the overlay is gone, and the stitched image opens in a
+  // second editor session in this same process.
+  const MonitorInfo overlayMonitor = capture.monitor;
+  CaptureEditor::ScrollRequest scrollRequest;
+  {
+    CaptureEditor editor(std::move(capture), captureMode, quickOutputMode,
+                         restoredLog);
+    if (!mapOverlay(editor)) {
+      qCritical() << "Could not create capture overlay layer";
+      return 1;
+    }
+    const int exitCode = application.exec();
+    scrollRequest = editor.scrollRequest();
+    if (!scrollRequest.requested || exitCode != 0)
+      return exitCode;
+  }
+
+  // Wait for the compositor to actually drop the overlay layer, so the paged
+  // frames photograph the window instead of the veil.
+  QThread::msleep(250);
+  QImage stitchedImage;
+  if (!runScrollCapture(overlayMonitor, scrollRequest.address,
+                        scrollRequest.monitorRect, scrollRequest.title,
+                        stitchedImage, error)) {
+    qCritical().noquote() << error;
+    sendCaptureNotification(QStringLiteral("Screenshot failed: %1").arg(error));
+    return 1;
+  }
+  if (quickOutputMode != QuickOutputMode::None) {
+    QString outputError;
+    if (!quickOutput(stitchedImage, quickOutputMode, outputError)) {
+      qCritical().noquote() << outputError;
+      return 1;
+    }
+    return 0;
+  }
+
+  CaptureData stitched;
+  stitched.source = stitchedImage;
+  stitched.previewSize = stitchedImage.size();
+  stitched.monitor.scale = 1.0;
+  stitched.monitor.pixelSize = stitchedImage.size();
+  stitched.monitor.geometry = QRect(QPoint(0, 0), stitchedImage.size());
+  CaptureEditor stitchedEditor(std::move(stitched),
+                               CaptureEditor::CaptureMode::File,
+                               QuickOutputMode::None, {});
+  if (!mapOverlay(stitchedEditor)) {
     qCritical() << "Could not create capture overlay layer";
     return 1;
   }
-  layerWindow->setScope(QStringLiteral("omasnap"));
-  layerWindow->setScreen(targetScreen);
-  layerWindow->setLayer(LayerShellQt::Window::LayerOverlay);
-  LayerShellQt::Window::Anchors anchors;
-  anchors.setFlag(LayerShellQt::Window::AnchorTop);
-  anchors.setFlag(LayerShellQt::Window::AnchorBottom);
-  anchors.setFlag(LayerShellQt::Window::AnchorLeft);
-  anchors.setFlag(LayerShellQt::Window::AnchorRight);
-  layerWindow->setAnchors(anchors);
-  layerWindow->setExclusiveZone(-1);
-  layerWindow->setKeyboardInteractivity(
-      LayerShellQt::Window::KeyboardInteractivityExclusive);
-  layerWindow->setActivateOnShow(true);
-  editor.show();
-  editor.setFocus(Qt::ActiveWindowFocusReason);
-
   return application.exec();
 }

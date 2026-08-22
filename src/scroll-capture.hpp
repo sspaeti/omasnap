@@ -50,6 +50,8 @@ private:
   bool heightCapped_ = false;
 };
 
+struct MonitorInfo;
+
 /**
  * Captures the focused window while paging it down, and stitches the frames
  * into one tall image. Scrolling is driven by sending Page_Down directly to
@@ -57,3 +59,14 @@ private:
  * the same in-process output capture as every other Omasnap screenshot.
  */
 [[nodiscard]] bool runScrollCapture(QImage &stitched, QString &error);
+
+/**
+ * Scroll-captures one specific window on `monitor`. `address` is the
+ * compositor window address and `monitorRect` the window's monitor-relative
+ * logical rectangle — both as the capture overlay's window list carries them.
+ */
+[[nodiscard]] bool runScrollCapture(const MonitorInfo &monitor,
+                                    const QString &address,
+                                    const QRect &monitorRect,
+                                    const QString &title, QImage &stitched,
+                                    QString &error);

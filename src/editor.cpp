@@ -2806,6 +2806,21 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
       updatePointerCursor();
       return;
     }
+    if (event->key() == Qt::Key_S) {
+      const int index = windowMode_ ? hoveredWindow_ : windowAt(cursor_);
+      if (index >= 0 && index < capture_.windows.size() &&
+          !capture_.windows.at(index).address.isEmpty()) {
+        const WindowTarget &target = capture_.windows.at(index);
+        // The overlay would photograph itself in every paged frame, so it
+        // closes here and main() runs the scroll capture after the loop ends.
+        scrollRequest_ = {true, target.address, target.rect, target.title};
+        close();
+        return;
+      }
+      setStatus(
+          QStringLiteral("Point at a window to scroll-capture it with S"));
+      return;
+    }
     QWidget::keyPressEvent(event);
     return;
   }
@@ -4192,6 +4207,7 @@ void CaptureEditor::paintSelect(QPainter &painter) {
   drawHotkeyLegend(painter, rect(), cursor_,
                    {{QStringLiteral("Drag"), QStringLiteral("Area")},
                     {QStringLiteral("Space"), QStringLiteral("Window")},
+                    {QStringLiteral("S"), QStringLiteral("Scroll window")},
                     {QStringLiteral("Ctrl+A"), QStringLiteral("Fullscreen")},
                     {QStringLiteral("Esc ×2"), QStringLiteral("Close")}});
   drawStatusPill(painter, rect(), status_);

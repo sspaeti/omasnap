@@ -30,6 +30,9 @@ struct WindowTarget {
   QRect rect;
   QString stableId;
   QString title;
+  /** Compositor window address, used to send keys to the window directly.
+   *  Defaulted so pre-existing three-field aggregates stay warning-free. */
+  QString address{};
 };
 
 struct CaptureData {
