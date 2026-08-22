@@ -142,6 +142,50 @@ std::vector<quint64> staticCellMask(const FrameSignature &previous,
 }
 
 /**
+ * The subset of static cells that also stand out from their row's
+ * background: actual fixed-overlay pixels. On a dark, sparse page nearly
+ * every cell is background-on-background and therefore "static" at any
+ * position; masking those out of the cost starves the match of columns
+ * and pushes it onto the unguarded fallback. Background cells stay in the
+ * comparison — they contribute zero difference wherever the true offset
+ * lies — and only cells that both stayed put and look like *something*
+ * (a widget, an icon, a pill) are excluded.
+ */
+std::vector<quint64> featureCellMask(const FrameSignature &previous,
+                                     const FrameSignature &next,
+                                     const std::vector<quint64> &staticMask) {
+  constexpr int kFeatureDeviation = 12;
+  const int rows = previous.rows();
+  std::vector<quint64> mask(static_cast<std::size_t>(rows), 0);
+  std::array<short, kSignatureColumns> sorted{};
+  const auto rowMedian = [&sorted](const FrameSignature &frame, int y) {
+    for (int c = 0; c < kSignatureColumns; ++c)
+      sorted[static_cast<std::size_t>(c)] = frame.sampleAt(y, c);
+    std::nth_element(sorted.begin(), sorted.begin() + kSignatureColumns / 2,
+                     sorted.end());
+    return sorted[kSignatureColumns / 2];
+  };
+  for (int y = 0; y < rows; ++y) {
+    const quint64 bits = staticMask[static_cast<std::size_t>(y)];
+    if (!bits)
+      continue;
+    const int beforeMedian = rowMedian(previous, y);
+    const int afterMedian = rowMedian(next, y);
+    quint64 feature = 0;
+    for (int c = 0; c < kSignatureColumns; ++c) {
+      if (!(bits & (quint64(1) << c)))
+        continue;
+      if (std::abs(previous.sampleAt(y, c) - beforeMedian) >
+              kFeatureDeviation ||
+          std::abs(next.sampleAt(y, c) - afterMedian) > kFeatureDeviation)
+        feature |= quint64(1) << c;
+    }
+    mask[static_cast<std::size_t>(y)] = feature;
+  }
+  return mask;
+}
+
+/**
  * Alignment cost over moving content only. Cells static at the same
  * position in either row of the pair are excluded: a fixed overlay riding
  * over the page can then neither veto the true offset (watson's share bar
@@ -238,7 +282,9 @@ ScrollFrameMatch matchScrollFrames(const QImage &previous,
 
   const int top = match.headerRows;
   const int contentBottom = height - match.footerRows;
-  const std::vector<quint64> mask = staticCellMask(before, after);
+  const std::vector<quint64> rawStatic = staticCellMask(before, after);
+  const std::vector<quint64> mask =
+      featureCellMask(before, after, rawStatic);
 
   // Fixed widgets riding over the bottom of the pane — a floating avatar,
   // a share bar, an editor's status pill — are static cells inside content
@@ -251,7 +297,7 @@ ScrollFrameMatch matchScrollFrames(const QImage &previous,
     for (int c = 0; c < kSignatureColumns; ++c) {
       int staticRows = 0;
       for (int y = top; y < contentBottom; ++y) {
-        if (mask[static_cast<std::size_t>(y)] & (quint64(1) << c))
+        if (rawStatic[static_cast<std::size_t>(y)] & (quint64(1) << c))
           ++staticRows;
       }
       if (staticRows * 100 < band * 95)
