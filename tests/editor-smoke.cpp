@@ -2313,9 +2313,9 @@ bool runOpLogCapKeepsLeadingCrop(QApplication &application, QString &error) {
 /** Runs the interaction and rendering smoke checks. */
 /** Runs the interaction and rendering smoke checks. */
 /** Runs the interaction and rendering smoke checks. */
-/** The S key in the selection overlay must hand back a scroll-capture
- *  request for the hovered window and close the overlay; without a window
- *  under the pointer it must stay open and just explain itself. */
+/** The S key in the selection overlay arms scroll picking; only a click on
+ *  a window (or Enter) hands back the scroll-capture request and closes the
+ *  overlay. A click beside every window must change nothing. */
 bool runScrollRequestSmoke(QApplication &application, QString &error) {
   CaptureData capture;
   capture.monitor.name = QStringLiteral("TEST");
@@ -2330,20 +2330,27 @@ bool runScrollRequestSmoke(QApplication &application, QString &error) {
                              QStringLiteral("0xabc123")});
 
   {
-    CaptureEditor editor(capture, CaptureEditor::CaptureMode::Window);
+    CaptureEditor editor(capture, CaptureEditor::CaptureMode::Region);
     editor.resize(800, 600);
     editor.show();
     application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_S);
+    application.processEvents();
+    if (editor.scrollRequest().requested || !editor.isVisible()) {
+      error = QStringLiteral("S must only arm the scroll pick, not capture");
+      return false;
+    }
     QTest::mouseMove(&editor, QPoint(200, 200));
     application.processEvents();
-    QTest::keyClick(&editor, Qt::Key_S);
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(200, 200));
     application.processEvents();
     const CaptureEditor::ScrollRequest &request = editor.scrollRequest();
     if (!request.requested ||
         request.address != QStringLiteral("0xabc123") ||
         request.monitorRect != QRect(80, 90, 400, 300)) {
-      error = QStringLiteral("S over a window did not produce the scroll "
-                             "request (requested %1, address %2)")
+      error = QStringLiteral("Clicking an armed window did not produce the "
+                             "scroll request (requested %1, address %2)")
                   .arg(request.requested)
                   .arg(request.address);
       return false;
@@ -2360,13 +2367,15 @@ bool runScrollRequestSmoke(QApplication &application, QString &error) {
     editor.resize(800, 600);
     editor.show();
     application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_S);
     QTest::mouseMove(&editor, QPoint(700, 550)); // outside the only window
     application.processEvents();
-    QTest::keyClick(&editor, Qt::Key_S);
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(700, 550));
     application.processEvents();
     if (editor.scrollRequest().requested || !editor.isVisible()) {
-      error = QStringLiteral("S without a hovered window must keep the "
-                             "overlay open and request nothing");
+      error = QStringLiteral("A click beside every window must keep the "
+                             "armed overlay open and request nothing");
       return false;
     }
     editor.close();

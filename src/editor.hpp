@@ -396,6 +396,8 @@ private:
   qreal cutDragRatio_ = 1.0;
   qreal cutDragOriginOffset_ = 0.0;
   bool windowMode_ = false;
+  /// Window picking armed for a scroll capture: click starts the scroll.
+  bool scrollMode_ = false;
   BackgroundStyle backgroundStyle_ = BackgroundStyle::None;
   bool busy_ = false;
   bool colorPaletteOpen_ = false;
