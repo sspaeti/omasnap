@@ -21,8 +21,12 @@ namespace {
 constexpr int kSignatureColumns = 64;
 /** Mean per-sample luma difference below which two rows count as equal. */
 constexpr double kStaticRowTolerance = 3.0;
-/** Mean per-sample luma difference below which an alignment is accepted. */
-constexpr double kMatchTolerance = 4.0;
+/** Mean per-sample luma difference below which an alignment is accepted.
+ *  Fractional monitor scales land scroll offsets between sample rows, and
+ *  ad-heavy pages keep a floor of churn even at the true offset, so this
+ *  sits well above a clean match (<1) but far below a misalignment (>15
+ *  once masking and trimming have removed overlays and animation). */
+constexpr double kMatchTolerance = 6.0;
 constexpr int kMaxScrollFrames = 80;
 constexpr int kSettlePollMs = 70;
 constexpr int kSettleTimeoutMs = 900;
@@ -55,6 +59,9 @@ public:
 
   [[nodiscard]] int rows() const { return rows_; }
 
+  /** Winsorized: each column contributes at most kColumnDiffCap, so one
+   *  small fixed widget riding over the content — a floating avatar, a
+   *  chat bubble, a scroll-to-top button — cannot drown out a whole row. */
   [[nodiscard]] double rowDifference(int row, const FrameSignature &other,
                                      int otherRow) const {
     const short *a = &samples_[static_cast<std::size_t>(row) *
@@ -63,8 +70,15 @@ public:
                                      kSignatureColumns];
     int sum = 0;
     for (int i = 0; i < kSignatureColumns; ++i)
-      sum += std::abs(a[i] - b[i]);
+      sum += std::min(std::abs(a[i] - b[i]), kColumnDiffCap);
     return static_cast<double>(sum) / kSignatureColumns;
+  }
+
+  static constexpr int kColumnDiffCap = 40;
+
+  [[nodiscard]] short sampleAt(int row, int column) const {
+    return samples_[static_cast<std::size_t>(row) * kSignatureColumns +
+                    static_cast<std::size_t>(column)];
   }
 
 private:
@@ -73,17 +87,94 @@ private:
   std::vector<short> samples_;
 };
 
-/** Mean row difference of `next` rows [top, bottom) against `previous`
- *  shifted down by `offset`. */
+/** Trimmed mean of per-row costs: the worst 30% of rows are dropped, so an
+ *  animated ad or video band cannot veto an otherwise exact alignment. */
+double trimmedMean(std::vector<double> &rows) {
+  if (rows.empty())
+    return kMatchTolerance + 1.0;
+  const std::size_t kept = rows.size() - rows.size() * 3 / 10;
+  std::nth_element(rows.begin(), rows.begin() + static_cast<long>(kept - 1),
+                   rows.end());
+  double sum = 0.0;
+  for (std::size_t i = 0; i < kept; ++i)
+    sum += rows[i];
+  return sum / static_cast<double>(kept);
+}
+
 double alignmentCost(const FrameSignature &previous, const FrameSignature &next,
                      int offset, int top, int bottom) {
-  double sum = 0.0;
-  int count = 0;
-  for (int y = top; y < bottom; y += 2) {
-    sum += next.rowDifference(y, previous, y + offset);
-    ++count;
+  std::vector<double> rows;
+  rows.reserve(static_cast<std::size_t>(std::max(0, bottom - top) / 2 + 1));
+  for (int y = top; y < bottom; y += 2)
+    rows.push_back(next.rowDifference(y, previous, y + offset));
+  return trimmedMean(rows);
+}
+
+/** Cells that show the same pixels at the same position in both frames.
+ *  While the page scrolled, such a cell belongs to something that did not
+ *  move with it — a floating avatar, a share bar, plain empty margin. */
+std::vector<quint64> staticCellMask(const FrameSignature &previous,
+                                    const FrameSignature &next) {
+  constexpr int kStaticCellTolerance = 6;
+  std::vector<quint64> mask(static_cast<std::size_t>(previous.rows()), 0);
+  for (int y = 0; y < previous.rows(); ++y) {
+    quint64 bits = 0;
+    for (int c = 0; c < kSignatureColumns; ++c) {
+      if (std::abs(next.sampleAt(y, c) - previous.sampleAt(y, c)) <=
+          kStaticCellTolerance)
+        bits |= quint64(1) << c;
+    }
+    mask[static_cast<std::size_t>(y)] = bits;
   }
-  return count > 0 ? sum / count : kMatchTolerance + 1.0;
+  return mask;
+}
+
+/**
+ * Alignment cost over moving content only. Cells static at the same
+ * position in either row of the pair are excluded: a fixed overlay riding
+ * over the page can then neither veto the true offset (watson's share bar
+ * sits exactly in the one-line overlap a full page-down leaves) nor let a
+ * blank region vote for a false one. Returns false when too little moving
+ * content remains to judge — the caller falls back to the plain cost.
+ */
+bool maskedAlignmentCost(const FrameSignature &previous,
+                         const FrameSignature &next,
+                         const std::vector<quint64> &mask, int offset, int top,
+                         int bottom, double &cost) {
+  constexpr int kTextureThreshold = 12;
+  std::vector<double> rows;
+  rows.reserve(static_cast<std::size_t>(std::max(0, bottom - top) / 2 + 1));
+  for (int y = top; y < bottom; y += 2) {
+    const quint64 skip = mask[static_cast<std::size_t>(y)] |
+                         mask[static_cast<std::size_t>(y + offset)];
+    int sum = 0;
+    int columns = 0;
+    int nextLow = 255, nextHigh = 0, prevLow = 255, prevHigh = 0;
+    for (int c = 0; c < kSignatureColumns; ++c) {
+      if (skip & (quint64(1) << c))
+        continue;
+      const int nextSample = next.sampleAt(y, c);
+      const int prevSample = previous.sampleAt(y + offset, c);
+      sum += std::min(std::abs(nextSample - prevSample),
+                      FrameSignature::kColumnDiffCap);
+      ++columns;
+      nextLow = std::min(nextLow, nextSample);
+      nextHigh = std::max(nextHigh, nextSample);
+      prevLow = std::min(prevLow, prevSample);
+      prevHigh = std::max(prevHigh, prevSample);
+    }
+    // A row votes only when either side carries content: a blank-on-blank
+    // pair costs zero at every offset (interline gaps, empty margins) and
+    // enough of them would elect an arbitrary alignment or a false bottom.
+    const bool textured = nextHigh - nextLow > kTextureThreshold ||
+                          prevHigh - prevLow > kTextureThreshold;
+    if (columns >= 16 && textured)
+      rows.push_back(static_cast<double>(sum) / columns);
+  }
+  if (rows.size() < 8)
+    return false;
+  cost = trimmedMean(rows);
+  return true;
 }
 } // namespace
 
@@ -110,26 +201,43 @@ ScrollFrameMatch matchScrollFrames(const QImage &previous,
 
   const int top = match.headerRows;
   const int contentBottom = height - match.footerRows;
-  const double stillCost =
-      alignmentCost(before, after, 0, top, contentBottom);
+  const std::vector<quint64> mask = staticCellMask(before, after);
+  // "Nothing moved" goes through the same gated cost as every offset: on a
+  // page that did scroll, the blank row-pairs that remain cheap at offset
+  // zero must not be allowed to fake a bottom.
+  double stillCost = 0.0;
+  if (!maskedAlignmentCost(before, after, mask, 0, top, contentBottom,
+                           stillCost))
+    stillCost = alignmentCost(before, after, 0, top, contentBottom);
 
   // Every offset is tried: sharp content (text) only dips to a low cost at
   // the exact alignment, so a strided search would step right over it. The
   // overlap floor adapts to the viewport: a browser paged in a quarter-tile
   // window leaves only a dozen shared rows, and a fixed floor of a few dozen
   // rows would place the true offset outside the search range entirely.
-  int bestOffset = 0;
-  double bestCost = kMatchTolerance + 1.0;
   const int minOverlap = std::max(8, (contentBottom - top) / 80);
   const int maxOffset = contentBottom - top - minOverlap;
+  std::vector<double> costs;
+  costs.reserve(static_cast<std::size_t>(std::max(0, maxOffset)));
+  double minCost = kMatchTolerance + 1.0;
   for (int offset = 1; offset <= maxOffset; ++offset) {
-    const double cost =
-        alignmentCost(before, after, offset, top, contentBottom - offset);
-    if (cost < bestCost) {
-      bestCost = cost;
-      bestOffset = offset;
-      if (bestCost < 0.5)
-        break;
+    double cost = 0.0;
+    if (!maskedAlignmentCost(before, after, mask, offset, top,
+                             contentBottom - offset, cost))
+      cost = alignmentCost(before, after, offset, top, contentBottom - offset);
+    costs.push_back(cost);
+    minCost = std::min(minCost, cost);
+  }
+  // Among near-equal dips, the smallest offset wins: it has the largest
+  // overlap behind it, where a large offset may be riding on a few blank
+  // rows that would match anywhere.
+  int bestOffset = 0;
+  double bestCost = kMatchTolerance + 1.0;
+  for (std::size_t index = 0; index < costs.size(); ++index) {
+    if (costs[index] <= minCost + 0.5) {
+      bestOffset = static_cast<int>(index) + 1;
+      bestCost = costs[index];
+      break;
     }
   }
 
@@ -330,6 +438,17 @@ bool captureWindowFrame(const MonitorInfo &monitor, const QRect &nativeRect,
   return true;
 }
 
+/** Whether two consecutive polls show the same page position. Robust, not
+ *  byte-exact: a spinning ad or a video keeps repainting its band forever,
+ *  and waiting for pixel-identical frames would always run out the clock. */
+bool framesSettled(const QImage &a, const QImage &b) {
+  if (a.size() != b.size() || a.isNull())
+    return false;
+  const FrameSignature first(a);
+  const FrameSignature second(b);
+  return alignmentCost(first, second, 0, 0, first.rows()) < 1.0;
+}
+
 /** Recaptures until two consecutive frames agree, riding out smooth-scroll
  *  animation without a fixed worst-case delay. */
 bool captureSettledFrame(const MonitorInfo &monitor, const QRect &nativeRect,
@@ -344,7 +463,7 @@ bool captureSettledFrame(const MonitorInfo &monitor, const QRect &nativeRect,
     QImage current;
     if (!captureWindowFrame(monitor, nativeRect, current, error))
       return false;
-    if (current == previous) {
+    if (framesSettled(previous, current)) {
       frame = current;
       return true;
     }
