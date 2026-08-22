@@ -50,6 +50,8 @@ add_library(omasnap-core STATIC
   src/palette-config.hpp
   src/eyedropper.cpp
   src/eyedropper.hpp
+  src/scroll-capture.cpp
+  src/scroll-capture.hpp
   src/surface-capture.cpp
   ${PROTOCOL_SOURCES}
   src/editor.cpp
@@ -93,6 +95,8 @@ qt_add_executable(omasnap-smoke
   tests/cut-smoke.hpp
   tests/palette-config-smoke.cpp
   tests/palette-config-smoke.hpp
+  tests/scroll-stitch-smoke.cpp
+  tests/scroll-stitch-smoke.hpp
   tests/surface-capture-smoke.cpp
   tests/surface-capture-smoke.hpp
   tests/pin-lifecycle-smoke.cpp

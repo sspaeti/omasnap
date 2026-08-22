@@ -10,6 +10,11 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
 ## Features
 
 - Freeform region, window, and full-monitor capture modes.
+- Scrolling capture: `omasnap scroll` pages the focused window down and stitches
+  the frames into one tall image — a full web page, chat log, or document.
+  Sticky headers and footers are detected and kept exactly once. Works on
+  anything that scrolls on `Page Down`; the page is scrolled via the
+  compositor, so focus never moves and no browser extension is needed.
 - A pointer-side readout that turns any drag into a ruler: the pointer position
   while the crosshair is idle, then the frame size in native export pixels while a
   region, a hovered window, or a crop handle is being sized.
@@ -155,6 +160,7 @@ Explicit starting modes:
 omasnap --capture-region
 omasnap --capture-window
 omasnap --capture-fullscreen
+omasnap --capture-scroll
 ```
 
 Compatibility positional names are also accepted:
@@ -164,6 +170,7 @@ omasnap region
 omasnap windows
 omasnap fullscreen
 omasnap smart       # maps to region selection
+omasnap scroll      # scrolling capture of the focused window
 ```
 
 These options choose what is initially selected; the editor still controls whether the
@@ -171,8 +178,36 @@ result is copied, saved, or both.
 
 Quick output skips the annotation editor. Add `--copy` to copy only, `--save` to save
 only, or both flags to copy and save. Region and window captures output after selection;
-fullscreen captures output immediately. Quick output cannot be combined with `--file`,
-`--clipboard`, or `--pin`.
+fullscreen and scrolling captures output immediately. Quick output cannot be combined
+with `--file`, `--clipboard`, or `--pin`.
+
+### Scrolling capture
+
+`omasnap scroll` captures the entire scrollable content of the focused window,
+not just the visible viewport. It sends `Page Down` directly to the window
+through the compositor (`hyprctl dispatch send_shortcut`), recaptures after
+each page settles, and aligns consecutive frames by image content:
+
+- Sticky headers and footers (site navigation bars, toolbars, cookie banners)
+  are detected as unmoving bands and appear exactly once — headers at the top,
+  footers at the bottom.
+- Smooth-scroll animation is ridden out by recapturing until two consecutive
+  frames agree, so there is no fixed worst-case delay per page.
+- The capture stops at the bottom of the page, after 80 pages, or at a
+  stitched height of 32000 pixels, whichever comes first.
+
+The stitched image opens in the annotation editor (zoom and pan handle the
+tall canvas), or goes straight out with `--copy`/`--save`. The window is left
+scrolled to wherever the capture ended.
+
+It works on any window that scrolls a full viewport on `Page Down` with some
+overlap — browsers, PDF viewers, editors. Apps that only scroll on mouse wheel
+(some chat clients) are not paged. Bind it next to the regular capture key,
+for example:
+
+```lua
+o.bind("SUPER + PRINT", "Scrolling screenshot", "omasnap scroll")
+```
 
 ### One instance, toggled by the same hotkey
 
@@ -187,7 +222,8 @@ the overlay that is still on screen.
 
 Editing an existing image is never cancelled this way: `--file`, `--clipboard`, or an
 image path stops the running instance, waits up to two seconds for the lock, and opens the
-editor on that image. That is how a pin's Edit button and a notification click always land
+editor on that image. A scrolling capture takes over the same way, so its editor always
+appears. That is how a pin's Edit button and a notification click always land
 in the editor.
 
 A lock left behind by a crashed instance is removed and reclaimed. A lock file that cannot

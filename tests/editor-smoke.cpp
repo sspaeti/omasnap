@@ -9,6 +9,7 @@
 #include "palette-config-smoke.hpp"
 #include "pin-layout-smoke.hpp"
 #include "pin-lifecycle-smoke.hpp"
+#include "scroll-stitch-smoke.hpp"
 #include "transform-smoke.hpp"
 #include "eyedropper.hpp"
 
@@ -4747,6 +4748,10 @@ int main(int argc, char **argv) {
   if (!runQuickOutputChecks(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 73;
+  }
+  if (!runScrollStitchSmoke(snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 131;
   }
   if (!runStuckModifierSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
