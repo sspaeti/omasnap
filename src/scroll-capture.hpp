@@ -15,6 +15,14 @@ struct ScrollFrameMatch {
   int headerRows = 0;
   /** Static band pinned to the bottom of the viewport (sticky footer). */
   int footerRows = 0;
+  /**
+   * Bottom rows containing fixed widgets that ride over the content — a
+   * floating avatar, a share bar, an editor's status pill. Wider than
+   * `footerRows` (which needs the whole row static): strips are extracted
+   * above this band so the widgets appear once instead of once per page,
+   * while the offset search still uses the full `footerRows` band.
+   */
+  int overlayFooterRows = 0;
   /** Mean luma cost of "nothing moved", for OMASNAP_SCROLL_DEBUG logs. */
   double stillCost = 0.0;
   /** Mean luma cost of the best non-zero offset, for the same logs. */
@@ -47,6 +55,13 @@ public:
    * the seam is exact whenever the app's step really is one viewport.
    */
   void appendFullPage(const QImage &frame, const ScrollFrameMatch &match);
+  /**
+   * Fixes the bottom band cut for the whole capture. Strips only tile
+   * seamlessly when every one is cut at the same distance from the bottom;
+   * per-frame footer estimates jitter by a few rows and would shift every
+   * seam by the difference. Set once, from the first frame pair.
+   */
+  void lockExtractionFooter(int rows) { extractionFooterLock_ = rows; }
   [[nodiscard]] QImage result() const;
   [[nodiscard]] int height() const { return height_; }
   [[nodiscard]] bool heightCapped() const { return heightCapped_; }
@@ -54,10 +69,16 @@ public:
   static constexpr int kMaxStitchHeight = 32000;
 
 private:
-  void appendStrip(const QImage &frame, int offset, int footerRows);
+  void appendStrip(const QImage &frame, int offset, int footerRows,
+                   int headerRows);
+  [[nodiscard]] int effectiveFooter(const ScrollFrameMatch &match) const {
+    return extractionFooterLock_ >= 0 ? extractionFooterLock_
+                                      : match.footerRows;
+  }
 
   QImage previous_;
   QVector<QImage> strips_;
+  int extractionFooterLock_ = -1;
   QImage footer_;
   int height_ = 0;
   int maxHeight_ = kMaxStitchHeight;

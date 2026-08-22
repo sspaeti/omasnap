@@ -161,7 +161,8 @@ bool maskedAlignmentCost(const FrameSignature &previous,
                          mask[static_cast<std::size_t>(y + offset)];
     int sum = 0;
     int columns = 0;
-    int nextLow = 255, nextHigh = 0, prevLow = 255, prevHigh = 0;
+    int nextSharp = 0, prevSharp = 0;
+    int lastColumn = -2, lastNext = 0, lastPrev = 0;
     for (int c = 0; c < kSignatureColumns; ++c) {
       if (skip & (quint64(1) << c))
         continue;
@@ -170,17 +171,21 @@ bool maskedAlignmentCost(const FrameSignature &previous,
       sum += std::min(std::abs(nextSample - prevSample),
                       FrameSignature::kColumnDiffCap);
       ++columns;
-      nextLow = std::min(nextLow, nextSample);
-      nextHigh = std::max(nextHigh, nextSample);
-      prevLow = std::min(prevLow, prevSample);
-      prevHigh = std::max(prevHigh, prevSample);
+      if (c == lastColumn + 1) {
+        nextSharp = std::max(nextSharp, std::abs(nextSample - lastNext));
+        prevSharp = std::max(prevSharp, std::abs(prevSample - lastPrev));
+      }
+      lastColumn = c;
+      lastNext = nextSample;
+      lastPrev = prevSample;
     }
-    // A row votes only when either side carries content: a blank-on-blank
-    // pair costs zero at every offset (interline gaps, empty margins) and
-    // enough of them would elect an arbitrary alignment or a false bottom.
-    const bool textured = !textureGate ||
-                          nextHigh - nextLow > kTextureThreshold ||
-                          prevHigh - prevLow > kTextureThreshold;
+    // A row votes only when either side carries sharp content. Blank rows
+    // cost zero at every offset, and a smooth background gradient looks
+    // almost identical shifted by a few rows — enough of either would let
+    // a too-small offset tie the real one and duplicate a band at the
+    // seam. Only text-like edges between neighboring samples discriminate.
+    const bool textured = !textureGate || nextSharp > kTextureThreshold ||
+                          prevSharp > kTextureThreshold;
     if (columns >= 16 && textured)
       rows.push_back(static_cast<double>(sum) / columns);
   }
@@ -234,6 +239,43 @@ ScrollFrameMatch matchScrollFrames(const QImage &previous,
   const int top = match.headerRows;
   const int contentBottom = height - match.footerRows;
   const std::vector<quint64> mask = staticCellMask(before, after);
+
+  // Fixed widgets riding over the bottom of the pane — a floating avatar,
+  // a share bar, an editor's status pill — are static cells inside content
+  // columns. Extend an extraction-only footer over the contiguous band that
+  // contains them, so appended strips stop above the widgets and they end
+  // up in the final image exactly once, from the last frame.
+  {
+    quint64 contentColumns = 0;
+    const int band = std::max(1, contentBottom - top);
+    for (int c = 0; c < kSignatureColumns; ++c) {
+      int staticRows = 0;
+      for (int y = top; y < contentBottom; ++y) {
+        if (mask[static_cast<std::size_t>(y)] & (quint64(1) << c))
+          ++staticRows;
+      }
+      if (staticRows * 100 < band * 95)
+        contentColumns |= quint64(1) << c;
+    }
+    const int contentColumnCount = std::popcount(contentColumns);
+    match.overlayFooterRows = match.footerRows;
+    if (contentColumnCount >= 8) {
+      const int cellThreshold = std::max(2, contentColumnCount / 5);
+      const int cap = height / 4;
+      const int maxGap = height / 16; // widgets float above the edge
+      int gap = 0;
+      for (int rowsUp = match.footerRows; rowsUp < cap; ++rowsUp) {
+        if (std::popcount(
+                mask[static_cast<std::size_t>(height - 1 - rowsUp)] &
+                contentColumns) >= cellThreshold) {
+          match.overlayFooterRows = rowsUp + 1;
+          gap = 0;
+        } else if (++gap > maxGap) {
+          break;
+        }
+      }
+    }
+  }
   // "Nothing moved" goes through the same gated cost as every offset: on a
   // page that did scroll, the blank row-pairs that remain cheap at offset
   // zero must not be allowed to fake a bottom.
@@ -395,19 +437,20 @@ ScrollFrameMatch ScrollStitcher::append(const QImage &frame) {
   const ScrollFrameMatch match = matchScrollFrames(previous_, frame);
   if (!match.matched || match.offset == 0)
     return match;
-  appendStrip(frame, match.offset, match.footerRows);
+  appendStrip(frame, match.offset, effectiveFooter(match), match.headerRows);
   return match;
 }
 
 void ScrollStitcher::appendFullPage(const QImage &frame,
                                     const ScrollFrameMatch &match) {
-  const int step = frame.height() - match.footerRows - match.headerRows;
+  const int footer = effectiveFooter(match);
+  const int step = frame.height() - footer - match.headerRows;
   if (step > 0)
-    appendStrip(frame, step, match.footerRows);
+    appendStrip(frame, step, footer, match.headerRows);
 }
 
 void ScrollStitcher::appendStrip(const QImage &frame, int offset,
-                                 int footerRows) {
+                                 int footerRows, int headerRows) {
   const int height = frame.height();
   const int width = frame.width();
   const int footerTop = height - footerRows;
@@ -423,11 +466,16 @@ void ScrollStitcher::appendStrip(const QImage &frame, int offset,
   footer_ = footerRows > 0 ? frame.copy(0, footerTop, width, footerRows)
                            : QImage();
 
+  // A large scroll step can leave less room above the footer cut than the
+  // step itself; the strip then starts below the sticky header and the few
+  // missing rows are the price of the fixed cut, not a seam shift.
+  const int start = std::max(headerRows, footerTop - offset);
   const int available = maxHeight_ - height_ - footer_.height();
-  const int stripRows = std::min(offset, std::max(0, available));
-  heightCapped_ = heightCapped_ || stripRows < offset;
+  const int stripRows =
+      std::min(footerTop - start, std::max(0, available));
+  heightCapped_ = heightCapped_ || stripRows < footerTop - start;
   if (stripRows > 0) {
-    strips_.append(frame.copy(0, footerTop - offset, width, stripRows));
+    strips_.append(frame.copy(0, start, width, stripRows));
     height_ += stripRows;
   }
   height_ += footer_.height();
@@ -741,6 +789,13 @@ bool runScrollCapture(const MonitorInfo &monitor, const QString &address,
       ScrollStitcher::kMaxStitchHeight - topBand.height() -
       (first.height() - region.y() - region.height());
   ScrollStitcher stitcher(first.copy(region), bandBudget);
+  // One fixed bottom cut for the whole capture: it hides fixed widgets
+  // riding over the pane (floating avatars, share bars, status pills) in
+  // every strip, and per-frame footer jitter would shift every seam.
+  const ScrollFrameMatch probe =
+      matchScrollFrames(first.copy(region), second.copy(region));
+  stitcher.lockExtractionFooter(
+      std::max(probe.footerRows, probe.overlayFooterRows));
 
   int frames = 1;
   bool reachedBottom = false;
@@ -757,11 +812,17 @@ bool runScrollCapture(const MonitorInfo &monitor, const QString &address,
       match = stitcher.append(frame.copy(region));
       debugDump(frame, frames, &match);
     }
-    if (!match.matched && match.stillCost > kMatchTolerance) {
-      // The pane clearly moved yet shares no pixels with the previous view:
-      // the app pages exactly one viewport per Page_Down (Obsidian's
-      // reading view), so there is nothing to align. Take the full page;
-      // the seam is exact whenever the step really is one viewport.
+    const int searchBand =
+        region.height() - match.headerRows - match.footerRows;
+    if (!match.matched && match.stillCost > kMatchTolerance &&
+        match.offset > searchBand * 9 / 10) {
+      // The pane clearly moved yet shares no pixels with the previous view,
+      // and even the least-bad alignment sits at the far end of the search
+      // band: the app pages a whole viewport per Page_Down (Obsidian), so
+      // there is nothing to align. Take the full page; the seam is exact
+      // whenever the step really is one viewport. The offset guard keeps
+      // this from ever firing on a browser page where a fade or an ad
+      // merely spoiled one match.
       stitcher.appendFullPage(frame.copy(region), match);
       if (!debugDirectory.isEmpty())
         qInfo().noquote() << QStringLiteral(

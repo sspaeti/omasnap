@@ -4,6 +4,8 @@
 #include "scroll-capture.hpp"
 
 #include <QImage>
+#include <algorithm>
+
 #include <QColor>
 #include <QPainter>
 #include <QRgb>
@@ -185,6 +187,53 @@ bool runScrollStitchSmoke(QString &error) {
     painter.end();
     if (!imagesEqual(stitcher.result(), expected)) {
       error = QStringLiteral("Sticky-band stitch composed the wrong image");
+      return false;
+    }
+  }
+
+  {
+    // A fixed widget riding over the pane (floating avatar, status pill)
+    // must appear exactly once in the stitch — in the bottom band — not
+    // once per appended page.
+    const QRgb pill = qRgb(255, 0, 255);
+    const auto widgetFrame = [&](int scroll) {
+      QImage frame = viewportFrame(page, scroll, {}, {});
+      QPainter painter(&frame);
+      painter.fillRect(360, kViewportHeight - 90, 200, 50, QColor(pill));
+      return frame;
+    };
+    ScrollStitcher stitcher(widgetFrame(0));
+    const ScrollFrameMatch probe =
+        matchScrollFrames(widgetFrame(0), widgetFrame(500));
+    stitcher.lockExtractionFooter(
+        std::max(probe.footerRows, probe.overlayFooterRows));
+    for (int scroll = 500; scroll + kViewportHeight <= kPageHeight;
+         scroll += 500) {
+      const ScrollFrameMatch match = stitcher.append(widgetFrame(scroll));
+      if (!match.matched || match.offset != 500) {
+        error = QStringLiteral("Widget-overlay match failed: matched %1 "
+                               "offset %2")
+                    .arg(match.matched)
+                    .arg(match.offset);
+        return false;
+      }
+    }
+    const QImage result = stitcher.result().convertToFormat(
+        QImage::Format_RGB32);
+    qint64 pillPixels = 0;
+    for (int y = 0; y < result.height(); ++y) {
+      const auto *pixels =
+          reinterpret_cast<const QRgb *>(result.constScanLine(y));
+      for (int x = 0; x < result.width(); ++x)
+        pillPixels += pixels[x] == pill ? 1 : 0;
+    }
+    // A couple of noise pixels can be pure magenta by chance.
+    if (pillPixels < 200 * 50 || pillPixels > 200 * 50 + 8) {
+      error = QStringLiteral("The fixed widget appears %1 times in the "
+                             "stitch instead of once (%2 pixels)")
+                  .arg(static_cast<double>(pillPixels) / (200 * 50), 0, 'f',
+                       4)
+                  .arg(pillPixels);
       return false;
     }
   }
