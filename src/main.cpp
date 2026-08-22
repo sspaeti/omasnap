@@ -3,6 +3,7 @@
 #include "editor.hpp"
 #include "instance-lock.hpp"
 #include "pin.hpp"
+#include "scroll-capture.hpp"
 
 #include <LayerShellQt/Window>
 
@@ -16,6 +17,7 @@
 #include <QLockFile>
 #include <QScreen>
 #include <QSocketNotifier>
+#include <QThread>
 #include <QUrl>
 #include <QWindow>
 
@@ -129,9 +131,14 @@ int main(int argc, char **argv) {
   const QCommandLineOption regionOption(
       QStringLiteral("capture-region"),
       QStringLiteral("Start in freeform region selection mode (default)."));
+  const QCommandLineOption scrollOption(
+      QStringLiteral("capture-scroll"),
+      QStringLiteral("Page the focused window down and stitch the frames "
+                     "into one tall capture."));
   parser.addOption(fullscreenOption);
   parser.addOption(windowOption);
   parser.addOption(regionOption);
+  parser.addOption(scrollOption);
   const QCommandLineOption copyOption(
       QStringLiteral("copy"),
       QStringLiteral("Copy the capture directly without opening the editor."));
@@ -158,8 +165,8 @@ int main(int argc, char **argv) {
   parser.addOption(pinOption);
   parser.addPositionalArgument(
       QStringLiteral("target"),
-      QStringLiteral("Capture mode (smart, region, windows, fullscreen) or the "
-                     "path of an image file to edit."),
+      QStringLiteral("Capture mode (smart, region, windows, fullscreen, "
+                     "scroll) or the path of an image file to edit."),
       QStringLiteral("[target]"));
   parser.process(application);
 
@@ -175,8 +182,10 @@ int main(int argc, char **argv) {
     quickOutputMode = QuickOutputMode::Save;
 
   CaptureEditor::CaptureMode captureMode = CaptureEditor::CaptureMode::Region;
+  bool scrollCapture = parser.isSet(scrollOption);
   int requestedModes = parser.isSet(fullscreenOption) +
-                       parser.isSet(windowOption) + parser.isSet(regionOption);
+                       parser.isSet(windowOption) + parser.isSet(regionOption) +
+                       parser.isSet(scrollOption);
   if (parser.isSet(fullscreenOption))
     captureMode = CaptureEditor::CaptureMode::Fullscreen;
   else if (parser.isSet(windowOption))
@@ -214,6 +223,8 @@ int main(int argc, char **argv) {
       else if (mode == QStringLiteral("smart") ||
                mode == QStringLiteral("region"))
         captureMode = CaptureEditor::CaptureMode::Region;
+      else if (mode == QStringLiteral("scroll"))
+        scrollCapture = true;
       else {
         qCritical().noquote()
             << QStringLiteral("Unknown capture target: %1").arg(mode);
@@ -254,8 +265,8 @@ int main(int argc, char **argv) {
   // of starting a second one: a late capture would otherwise photograph that overlay.
   // Editing an image always takes over so the requested editor can open.
   const InstanceLockResult lockResult = acquireInstanceLock(
-      instanceLock, editingImage ? InstanceMode::EditFile
-                                 : InstanceMode::Capture);
+      instanceLock, editingImage || scrollCapture ? InstanceMode::EditFile
+                                                  : InstanceMode::Capture);
   if (lockResult.signalledPid != 0)
     qInfo().noquote() << QStringLiteral("Asked the running omasnap (pid %1) to "
                                         "quit")
@@ -269,7 +280,32 @@ int main(int argc, char **argv) {
   CaptureData capture;
   OperationLog restoredLog;
   QString error;
-  if (editingImage) {
+  if (scrollCapture) {
+    // Let a dismissed overlay unmap before the first frame is captured.
+    if (lockResult.signalledPid != 0)
+      QThread::msleep(300);
+    QImage image;
+    if (!runScrollCapture(image, error)) {
+      qCritical().noquote() << error;
+      sendCaptureNotification(
+          QStringLiteral("Screenshot failed: %1").arg(error));
+      return 1;
+    }
+    if (quickOutputMode != QuickOutputMode::None) {
+      QString outputError;
+      if (!quickOutput(image, quickOutputMode, outputError)) {
+        qCritical().noquote() << outputError;
+        return 1;
+      }
+      return 0;
+    }
+    capture.source = image;
+    capture.previewSize = image.size();
+    capture.monitor.scale = 1.0;
+    capture.monitor.pixelSize = image.size();
+    capture.monitor.geometry = QRect(QPoint(0, 0), image.size());
+    captureMode = CaptureEditor::CaptureMode::File;
+  } else if (editingImage) {
     QImage image;
     QString inputName;
     if (clipboardInput) {
@@ -321,7 +357,7 @@ int main(int argc, char **argv) {
   const bool instantFullscreenOutput =
       !editingImage && captureMode == CaptureEditor::CaptureMode::Fullscreen &&
       quickOutputMode != QuickOutputMode::None;
-  if (!editingImage &&
+  if (!editingImage && !scrollCapture &&
       !captureMonitorPixels(capture.monitor, capture,
                             !instantFullscreenOutput, error)) {
     qCritical().noquote() << error;
@@ -355,7 +391,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (!editingImage) {
+  if (!editingImage && !scrollCapture) {
     qInfo().noquote() << QStringLiteral(
                              "Captured %1 workspace %2 with %3 selectable "
                              "windows")
@@ -364,32 +400,82 @@ int main(int argc, char **argv) {
                              .arg(capture.windows.size());
   }
 
-  CaptureEditor editor(std::move(capture), captureMode, quickOutputMode,
-                       restoredLog);
-  editor.setScreen(targetScreen);
-  editor.setGeometry(targetScreen->geometry());
-  editor.winId();
-  QWindow *window = editor.windowHandle();
-  LayerShellQt::Window *layerWindow = LayerShellQt::Window::get(window);
-  if (!window || !layerWindow) {
+  const auto mapOverlay = [targetScreen](CaptureEditor &editor) -> bool {
+    editor.setScreen(targetScreen);
+    editor.setGeometry(targetScreen->geometry());
+    editor.winId();
+    QWindow *window = editor.windowHandle();
+    LayerShellQt::Window *layerWindow = LayerShellQt::Window::get(window);
+    if (!window || !layerWindow)
+      return false;
+    layerWindow->setScope(QStringLiteral("omasnap"));
+    layerWindow->setScreen(targetScreen);
+    layerWindow->setLayer(LayerShellQt::Window::LayerOverlay);
+    LayerShellQt::Window::Anchors anchors;
+    anchors.setFlag(LayerShellQt::Window::AnchorTop);
+    anchors.setFlag(LayerShellQt::Window::AnchorBottom);
+    anchors.setFlag(LayerShellQt::Window::AnchorLeft);
+    anchors.setFlag(LayerShellQt::Window::AnchorRight);
+    layerWindow->setAnchors(anchors);
+    layerWindow->setExclusiveZone(-1);
+    layerWindow->setKeyboardInteractivity(
+        LayerShellQt::Window::KeyboardInteractivityExclusive);
+    layerWindow->setActivateOnShow(true);
+    editor.show();
+    editor.setFocus(Qt::ActiveWindowFocusReason);
+    return true;
+  };
+
+  // The selection overlay can hand back a scroll-capture request (the S key).
+  // It runs after the overlay is gone, and the stitched image opens in a
+  // second editor session in this same process.
+  const MonitorInfo overlayMonitor = capture.monitor;
+  CaptureEditor::ScrollRequest scrollRequest;
+  {
+    CaptureEditor editor(std::move(capture), captureMode, quickOutputMode,
+                         restoredLog);
+    if (!mapOverlay(editor)) {
+      qCritical() << "Could not create capture overlay layer";
+      return 1;
+    }
+    const int exitCode = application.exec();
+    scrollRequest = editor.scrollRequest();
+    if (!scrollRequest.requested || exitCode != 0)
+      return exitCode;
+  }
+
+  // Wait for the compositor to actually drop the overlay layer, so the paged
+  // frames photograph the window instead of the veil.
+  QThread::msleep(250);
+  QImage stitchedImage;
+  if (!runScrollCapture(overlayMonitor, scrollRequest.address,
+                        scrollRequest.monitorRect, scrollRequest.title,
+                        stitchedImage, error)) {
+    qCritical().noquote() << error;
+    sendCaptureNotification(QStringLiteral("Screenshot failed: %1").arg(error));
+    return 1;
+  }
+  if (quickOutputMode != QuickOutputMode::None) {
+    QString outputError;
+    if (!quickOutput(stitchedImage, quickOutputMode, outputError)) {
+      qCritical().noquote() << outputError;
+      return 1;
+    }
+    return 0;
+  }
+
+  CaptureData stitched;
+  stitched.source = stitchedImage;
+  stitched.previewSize = stitchedImage.size();
+  stitched.monitor.scale = 1.0;
+  stitched.monitor.pixelSize = stitchedImage.size();
+  stitched.monitor.geometry = QRect(QPoint(0, 0), stitchedImage.size());
+  CaptureEditor stitchedEditor(std::move(stitched),
+                               CaptureEditor::CaptureMode::File,
+                               QuickOutputMode::None, {});
+  if (!mapOverlay(stitchedEditor)) {
     qCritical() << "Could not create capture overlay layer";
     return 1;
   }
-  layerWindow->setScope(QStringLiteral("omasnap"));
-  layerWindow->setScreen(targetScreen);
-  layerWindow->setLayer(LayerShellQt::Window::LayerOverlay);
-  LayerShellQt::Window::Anchors anchors;
-  anchors.setFlag(LayerShellQt::Window::AnchorTop);
-  anchors.setFlag(LayerShellQt::Window::AnchorBottom);
-  anchors.setFlag(LayerShellQt::Window::AnchorLeft);
-  anchors.setFlag(LayerShellQt::Window::AnchorRight);
-  layerWindow->setAnchors(anchors);
-  layerWindow->setExclusiveZone(-1);
-  layerWindow->setKeyboardInteractivity(
-      LayerShellQt::Window::KeyboardInteractivityExclusive);
-  layerWindow->setActivateOnShow(true);
-  editor.show();
-  editor.setFocus(Qt::ActiveWindowFocusReason);
-
   return application.exec();
 }

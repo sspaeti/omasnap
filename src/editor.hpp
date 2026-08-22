@@ -87,6 +87,22 @@ public:
    */
   void setSuppressSnapshots(bool suppress) { suppressSnapshots_ = suppress; }
 
+  /**
+   * A window the user asked to scroll-capture from the selection overlay (the
+   * S key). The overlay closes itself first — frames must not photograph the
+   * dim veil — so the request is carried out by main() after the event loop
+   * ends, and the stitched result opens in a fresh editor.
+   */
+  struct ScrollRequest {
+    bool requested = false;
+    QString address;
+    QRect monitorRect;
+    QString title;
+  };
+  [[nodiscard]] const ScrollRequest &scrollRequest() const {
+    return scrollRequest_;
+  }
+
 protected:
   bool eventFilter(QObject *watched, QEvent *event) override;
   void keyPressEvent(QKeyEvent *event) override;
@@ -380,6 +396,8 @@ private:
   qreal cutDragRatio_ = 1.0;
   qreal cutDragOriginOffset_ = 0.0;
   bool windowMode_ = false;
+  /// Window picking armed for a scroll capture: click starts the scroll.
+  bool scrollMode_ = false;
   BackgroundStyle backgroundStyle_ = BackgroundStyle::None;
   bool busy_ = false;
   bool colorPaletteOpen_ = false;
@@ -437,6 +455,7 @@ private:
   bool snapshotOutputRequested_ = false;
   bool suppressSnapshots_ = false;
   bool sourceWritten_ = false;
+  ScrollRequest scrollRequest_;
   // Background monitor capture fed to CaptureEditor::CaptureMode dispatch.
   struct CaptureJob {
     bool ok = false;

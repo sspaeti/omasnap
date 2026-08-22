@@ -33,6 +33,7 @@ markers, text, OCR). Finished captures go to clipboard,
 | `src/editor.cpp/.hpp` | Annotation editor: tools, vector layers, operation-log undo/redo, export |
 | `src/pin.cpp/.hpp` | Pinned-capture layer-shell surfaces (bottom-right, all workspaces) |
 | `src/surface-capture.cpp` | In-process output/window capture via `ext-image-copy-capture` |
+| `src/scroll-capture.cpp/.hpp` | Scrolling capture: pages the focused window via `send_shortcut`, aligns and stitches the frames |
 | `src/icons.cpp/.hpp` | Vector icon renderer for toolbar and pin controls |
 | `src/cli-path.cpp/.hpp` | Command-line image target resolution |
 | `src/eyedropper.cpp/.hpp` | Display-to-source color sampling |

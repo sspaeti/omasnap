@@ -2407,6 +2407,18 @@ void CaptureEditor::handleEscape() {
 void CaptureEditor::chooseWindow(int index) {
   if (index < 0 || index >= capture_.windows.size())
     return;
+  if (scrollMode_) {
+    const WindowTarget &target = capture_.windows.at(index);
+    if (target.address.isEmpty()) {
+      setStatus(QStringLiteral("This window cannot be scroll-captured"));
+      return;
+    }
+    // The overlay would photograph itself in every paged frame, so it closes
+    // here and main() runs the scroll capture after the event loop ends.
+    scrollRequest_ = {true, target.address, target.rect, target.title};
+    close();
+    return;
+  }
   selection_ = QRectF(capture_.windows.at(index).rect);
   redactionBaseStale_ = true;
   windowMode_ = false;
@@ -2770,6 +2782,7 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   if (phase_ == Phase::Select) {
     if (event->matches(QKeySequence::SelectAll)) {
       windowMode_ = false;
+      scrollMode_ = false;
       dragging_ = false;
       hoveredWindow_ = -1;
       selection_ = QRectF(QPointF(), capture_.previewSize);
@@ -2794,7 +2807,8 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
       return;
     }
     if (event->key() == Qt::Key_Space) {
-      windowMode_ = !windowMode_;
+      windowMode_ = scrollMode_ ? false : !windowMode_;
+      scrollMode_ = false;
       dragging_ = false;
       selection_ = {};
       hoveredWindow_ = windowMode_ ? windowAt(cursor_) : -1;
@@ -2804,6 +2818,25 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
                     : QStringLiteral(
                           "Drag to select an area · Space selects a window"));
       updatePointerCursor();
+      return;
+    }
+    if (event->key() == Qt::Key_S) {
+      // S only arms the pick, exactly like Space arms window mode; the
+      // capture itself waits for a click (or Enter), so the pointer can
+      // still travel across windows first.
+      scrollMode_ = !scrollMode_;
+      windowMode_ = scrollMode_;
+      dragging_ = false;
+      selection_ = {};
+      hoveredWindow_ = scrollMode_ ? windowAt(cursor_) : -1;
+      setStatus(scrollMode_
+                    ? QStringLiteral("Scroll mode · click or Super+Arrows "
+                                     "then Enter to scroll-capture a window "
+                                     "· S returns to area")
+                    : QStringLiteral(
+                          "Drag to select an area · Space selects a window"));
+      updatePointerCursor();
+      update();
       return;
     }
     QWidget::keyPressEvent(event);
@@ -4179,19 +4212,22 @@ void CaptureEditor::paintSelect(QPainter &painter) {
   badgeFont.setBold(true);
   badgeFont.setPixelSize(11);
   painter.setFont(badgeFont);
-  const QString badge =
-      windowMode_ ? QStringLiteral("WINDOW  ×") : QStringLiteral("AREA  ×");
+  const QString badge = scrollMode_  ? QStringLiteral("SCROLL  ×")
+                        : windowMode_ ? QStringLiteral("WINDOW  ×")
+                                      : QStringLiteral("AREA  ×");
   const int badgeWidth = painter.fontMetrics().horizontalAdvance(badge) + 24;
   const QRectF badgeRect((width() - badgeWidth) / 2.0, 12, badgeWidth, 32);
   painter.setPen(QPen(QColor(255, 255, 255, 32), 1));
   painter.setBrush(QColor(18, 18, 22, 235));
   painter.drawRoundedRect(badgeRect, 10, 10);
-  painter.setPen(windowMode_ ? QColor(QStringLiteral("#ffd60a"))
-                             : QColor(QStringLiteral("#30d158")));
+  painter.setPen(scrollMode_  ? QColor(QStringLiteral("#64d2ff"))
+                 : windowMode_ ? QColor(QStringLiteral("#ffd60a"))
+                               : QColor(QStringLiteral("#30d158")));
   painter.drawText(badgeRect, Qt::AlignCenter, badge);
   drawHotkeyLegend(painter, rect(), cursor_,
                    {{QStringLiteral("Drag"), QStringLiteral("Area")},
                     {QStringLiteral("Space"), QStringLiteral("Window")},
+                    {QStringLiteral("S"), QStringLiteral("Scroll window")},
                     {QStringLiteral("Ctrl+A"), QStringLiteral("Fullscreen")},
                     {QStringLiteral("Esc ×2"), QStringLiteral("Close")}});
   drawStatusPill(painter, rect(), status_);
