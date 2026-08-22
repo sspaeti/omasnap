@@ -4,6 +4,7 @@
 #include "scroll-capture.hpp"
 
 #include <QImage>
+#include <QColor>
 #include <QPainter>
 #include <QRgb>
 
@@ -81,6 +82,32 @@ bool runScrollStitchSmoke(QString &error) {
                   .arg(region.y())
                   .arg(region.width())
                   .arg(region.height());
+      return false;
+    }
+
+    // A centered content column: the blank page margins around it never
+    // register as moving, but they belong to the pane and must stay in the
+    // region — up to the window edge on the blank side, and up to (not
+    // into) the textured sidebar on the other.
+    const auto marginFrame = [&](int scroll) {
+      QImage frame(width, height, QImage::Format_RGB32);
+      frame.fill(QColor(24, 26, 32));
+      QPainter painter(&frame);
+      painter.drawImage(0, 0, chromeBand);
+      painter.drawImage(620, chrome, sidebar.copy(0, 0, 180, height - chrome));
+      painter.drawImage(120, chrome,
+                        page.copy(0, scroll, 380, height - chrome));
+      return frame;
+    };
+    const QRect margins = detectScrollRegion(marginFrame(0), marginFrame(400));
+    if (!margins.isValid() || margins.x() != 0 || margins.right() + 1 > 620 ||
+        margins.right() + 1 < 500) {
+      error = QStringLiteral("Blank page margins were cut from the region: "
+                             "%1,%2 %3x%4")
+                  .arg(margins.x())
+                  .arg(margins.y())
+                  .arg(margins.width())
+                  .arg(margins.height());
       return false;
     }
 

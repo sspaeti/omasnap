@@ -349,6 +349,26 @@ QRect detectScrollRegion(const QImage &first, const QImage &second) {
   if (top < 0 || bottom < top)
     return {};
 
+  // Blank margins never register as moving — blank scrolling over blank is
+  // static — yet they belong to the pane, and cutting them shaves the sides
+  // off the capture. Grow the region through featureless static columns; a
+  // real side panel carries content and stops the growth.
+  const auto blankColumn = [&](int c) {
+    if (movingRows[static_cast<std::size_t>(c)] >= columnThreshold)
+      return false;
+    int low = 255, high = 0;
+    for (int y = top; y <= bottom; y += 2) {
+      const int sample = after.sampleAt(y, c);
+      low = std::min(low, sample);
+      high = std::max(high, sample);
+    }
+    return high - low <= 14;
+  };
+  while (bestLeft > 0 && blankColumn(bestLeft - 1))
+    --bestLeft;
+  while (bestRight < kSignatureColumns - 1 && blankColumn(bestRight + 1))
+    ++bestRight;
+
   // Snap to the window edge wherever motion reaches the outermost samples;
   // the sampled band leaves margins that certainly belong to the pane.
   const int spacing = before.columnSpacing();
@@ -696,8 +716,8 @@ bool runScrollCapture(const MonitorInfo &monitor, const QString &address,
     stitched = first;
     restoreScrollPosition();
     qInfo().noquote()
-        << QStringLiteral("Scroll capture: \"%1\" does not scroll; kept the "
-                          "single %2x%3 frame")
+        << QStringLiteral("Scroll capture: \"%1\" does not scroll (or was "
+                          "already at its end); kept the single %2x%3 frame")
                .arg(title)
                .arg(stitched.width())
                .arg(stitched.height());
