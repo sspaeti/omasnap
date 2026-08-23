@@ -321,6 +321,7 @@ private:
   void redoEdit();
   void selectWindowInDirection(int key);
   void finish(OutputMode mode);
+  void saveAs();
   void handleEscape();
   void handleToolbar(const QString &action);
   void paintEdit(QPainter &painter);
